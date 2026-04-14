@@ -1,0 +1,87 @@
+{
+  "name": "vscode-md-viewer",
+  "displayName": "MD Viewer",
+  "description": "General molecular dynamics dataset viewer",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:md-viewer.launch",
+    "onCommand:md-viewer.openDataset",
+    "onCommand:md-viewer.openDatasetWithOptions"
+  ],
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "md-viewer.launch",
+        "title": "Launch MD Viewer",
+        "category": "MD Viewer"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "md-viewer.launch",
+          "when": "resourceExtname =~ /\\.(xyz|xtc|trr|dcd|nc|rst7|pdb|gro|parm7)$/i",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MD Viewer",
+      "properties": {
+        "mdViewer.renderMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "points",
+            "points+bonds"
+          ],
+          "default": "auto",
+          "description": "Select rendering strategy. Auto enables bonds only for small trajectories."
+        },
+        "mdViewer.maxAtomsForBonds": {
+          "type": "number",
+          "default": 2000,
+          "description": "In Auto render mode, bonds are disabled if atom count exceeds this threshold."
+        },
+        "mdViewer.maxFramesBeforeDecimation": {
+          "type": "number",
+          "default": 1000,
+          "description": "Skip frames on playback load if total frames exceed this. Improves load time & memory for huge trajectories."
+        },
+        "mdViewer.backgroundColor": {
+          "type": "string",
+          "enum": [
+            "black",
+            "white"
+          ],
+          "default": "black",
+          "description": "Choose the viewer background color for the 3D canvas."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.5.2",
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,182 @@
+:root {
+  --bg: #111822;
+  --card: #1b2431;
+  --card-border: #2d3d52;
+  --text: #e8eef7;
+  --muted: #9cb2cf;
+  --accent: #5dc8ff;
+  --warn: #f5b942;
+  --error: #f17676;
+  --ok: #71d99e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: radial-gradient(1200px 500px at 10% -10%, #203047 0%, var(--bg) 55%);
+  color: var(--text);
+  font-family: 'Segoe UI', 'Noto Sans', sans-serif;
+  font-size: 13px;
+}
+
+#app {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 16px 18px 28px;
+  display: grid;
+  gap: 12px;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.page-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.card {
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #202d3e 0%, var(--card) 100%);
+  padding: 12px;
+}
+
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+label {
+  display: grid;
+  gap: 5px;
+}
+
+label > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+input,
+select,
+button {
+  width: 100%;
+  min-height: 32px;
+  border-radius: 8px;
+  border: 1px solid #3b4e66;
+  background: #152030;
+  color: var(--text);
+  padding: 6px 10px;
+}
+
+input[readonly] {
+  background: #101924;
+  color: #c8d8ec;
+}
+
+.grid-two {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid-three {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.grid-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 2fr 1fr;
+  margin-bottom: 8px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+
+.actions button {
+  flex: 1;
+}
+
+.hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+#validation-list {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 6px;
+}
+
+#validation-list li {
+  color: #d6e4f7;
+}
+
+#validation-list li.level-warning {
+  color: var(--warn);
+}
+
+#validation-list li.level-error {
+  color: var(--error);
+}
+
+#validation-list li.level-info {
+  color: #b4cce8;
+}
+
+.actions-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.actions-row button {
+  width: auto;
+  min-width: 180px;
+}
+
+button.primary {
+  background: linear-gradient(180deg, #2f8ce8 0%, #1d6bcf 100%);
+  border-color: #5ea8f2;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .grid-two,
+  .grid-three,
+  .grid-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .actions {
+    align-items: stretch;
+  }
+
+  .actions-row button {
+    min-width: 0;
+    width: 100%;
+  }
+}
