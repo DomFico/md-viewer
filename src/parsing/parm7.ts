@@ -1,8 +1,9 @@
 import * as fs from 'fs';
-import * as path from 'path';
 import { spawn } from 'child_process';
 import { ITopologyParser } from './IParser';
 import { TopologyMetadata } from './pdb';
+import { RUNTIME_BRIDGE_SCRIPTS, resolveRuntimeBridgePath } from '../runtime/bridgePaths';
+import { preferredPythonExecutable } from '../runtime/pythonRuntime';
 
 export class Parm7Parser implements ITopologyParser {
   canParse(ext: string): boolean {
@@ -10,7 +11,7 @@ export class Parm7Parser implements ITopologyParser {
   }
 
   async parse(filePath: string): Promise<TopologyMetadata> {
-    const bridgePath = path.resolve(__dirname, '../../../scripts/parm7_topology_bridge.py');
+    const bridgePath = resolveRuntimeBridgePath(RUNTIME_BRIDGE_SCRIPTS.parm7Topology);
     if (!fs.existsSync(bridgePath)) {
       throw new Error(`.parm7 parser bridge is missing: ${bridgePath}`);
     }
@@ -137,20 +138,4 @@ function parseBridgeJson(output: string): unknown {
     const candidate = output.slice(firstBrace, lastBrace + 1);
     return JSON.parse(candidate);
   }
-}
-
-function preferredPythonExecutable(): string {
-  const envCandidates = [
-    process.env.MD_VIEWER_PYTHON,
-    process.env.PYTHON,
-    process.env.PYTHON3,
-  ];
-
-  for (const candidate of envCandidates) {
-    if (candidate && candidate.trim().length > 0) {
-      return candidate;
-    }
-  }
-
-  return 'python';
 }

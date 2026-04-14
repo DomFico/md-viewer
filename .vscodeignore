@@ -1,0 +1,20 @@
+.git/**
+.github/**
+.vscode/**
+.vscode-test/**
+node_modules/**
+src/**
+test/**
+*.ts
+*.tsbuildinfo
+**/*.map
+tsconfig.json
+.gitignore
+
+# Keep only runtime bridge scripts.
+scripts/**
+!scripts/binary_traj_bridge.py
+!scripts/parm7_topology_bridge.py
+
+# Keep docs that help local installation.
+!README.md

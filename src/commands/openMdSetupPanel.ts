@@ -20,6 +20,8 @@ import {
 import { emitCheckpoint } from '../runtimeCheckpoint';
 import { getSetupPanelHtml } from '../webview/getSetupPanelHtml';
 import { openMdViewer } from './openMdViewer';
+import { RUNTIME_BRIDGE_SCRIPTS, resolveRuntimeBridgePath } from '../runtime/bridgePaths';
+import { preferredPythonExecutable } from '../runtime/pythonRuntime';
 
 const DATASET_FILE_FILTERS = ['xyz', 'xtc', 'trr', 'dcd', 'nc', 'rst7', 'pdb', 'gro', 'parm7'];
 const SUPPORTED_TRAJECTORY_PARSE_EXTS = new Set(['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.pdb']);
@@ -225,27 +227,12 @@ function countPdbAtoms(filePath: string): number | null {
   }
 }
 
-function preferredPythonExecutable(): string {
-  const envCandidates = [
-    process.env.MD_VIEWER_PYTHON,
-    process.env.PYTHON,
-    process.env.PYTHON3,
-  ];
-
-  for (const candidate of envCandidates) {
-    if (candidate && candidate.trim().length > 0) {
-      return candidate;
-    }
-  }
-  return 'python';
-}
-
 async function probeBinaryMetadata(
   trajectoryPath: string,
   topologyPath: string,
   trajectoryExt: string
 ): Promise<{ atomCount: number | null; frameCount: number | null }> {
-  const bridgePath = path.resolve(__dirname, '../../../scripts/binary_traj_bridge.py');
+  const bridgePath = resolveRuntimeBridgePath(RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory);
   if (!fs.existsSync(bridgePath)) {
     return { atomCount: null, frameCount: null };
   }

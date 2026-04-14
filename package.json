@@ -25,6 +25,11 @@
         "command": "md-viewer.launch",
         "title": "Launch MD Viewer",
         "category": "MD Viewer"
+      },
+      {
+        "command": "md-viewer.runDependencyDiagnostics",
+        "title": "Run Dependency Diagnostics",
+        "category": "MD Viewer"
       }
     ],
     "menus": {
@@ -58,6 +63,11 @@
           "type": "number",
           "default": 1000,
           "description": "Skip frames on playback load if total frames exceed this. Improves load time & memory for huge trajectories."
+        },
+        "mdViewer.pythonInterpreter": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path or command name for the Python interpreter used by MD Viewer bridge scripts. Leave empty to use environment defaults."
         },
         "mdViewer.backgroundColor": {
           "type": "string",

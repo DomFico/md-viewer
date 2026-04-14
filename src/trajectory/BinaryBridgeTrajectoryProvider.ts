@@ -1,7 +1,6 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import { spawn } from 'child_process';
 import { emitCheckpoint } from '../runtimeCheckpoint';
+import { preferredPythonExecutable, resolveExecutablePath } from '../runtime/pythonRuntime';
 import {
   TrajectoryProvider,
   TrajectoryProviderMetadata,
@@ -335,36 +334,4 @@ function parseBridgeJson(output: string): unknown {
     const candidate = output.slice(firstBrace, lastBrace + 1);
     return JSON.parse(candidate);
   }
-}
-
-function preferredPythonExecutable(): string {
-  const envCandidates = [
-    process.env.MD_VIEWER_PYTHON,
-    process.env.PYTHON,
-    process.env.PYTHON3,
-  ];
-
-  for (const candidate of envCandidates) {
-    if (candidate && candidate.trim().length > 0) {
-      return candidate;
-    }
-  }
-  return 'python';
-}
-
-function resolveExecutablePath(executable: string): string | null {
-  if (path.isAbsolute(executable)) {
-    return fs.existsSync(executable) ? executable : null;
-  }
-
-  const pathEnv = process.env.PATH ?? '';
-  const pathSegments = pathEnv.split(path.delimiter).filter((segment) => segment.length > 0);
-  for (const segment of pathSegments) {
-    const candidate = path.join(segment, executable);
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return null;
 }

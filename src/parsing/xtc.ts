@@ -1,7 +1,7 @@
-import * as path from 'path';
 import { ITrajectoryParser, TrajectoryData } from './IParser';
 import { emitCheckpoint } from '../runtimeCheckpoint';
 import { BinaryBridgeTrajectoryProvider } from '../trajectory/BinaryBridgeTrajectoryProvider';
+import { RUNTIME_BRIDGE_SCRIPTS, resolveRuntimeBridgePath } from '../runtime/bridgePaths';
 
 export type BinaryTrajectoryFormat = 'xtc' | 'dcd' | 'trr' | 'nc' | 'rst7';
 
@@ -73,7 +73,7 @@ class BinaryBridgeTrajectoryParser implements ITrajectoryParser {
       throw new Error(`${this.format.toUpperCase()} trajectory parser requires a companion topology path. Missing topology.`);
     }
 
-    const bridgePath = path.resolve(__dirname, '../../../scripts/binary_traj_bridge.py');
+    const bridgePath = resolveRuntimeBridgePath(RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory);
     const defaultChunkSize = parseEnvInt('MD_VIEWER_STREAM_CHUNK_SIZE', 24);
     const provider = new BinaryBridgeTrajectoryProvider({
       trajectoryPath: filePath,
