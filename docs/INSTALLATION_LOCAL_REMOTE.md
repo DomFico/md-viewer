@@ -5,7 +5,7 @@
 Local VSIX install:
 
 ```bash
-code --install-extension /path/to/md-viewer-0.1.0-rc3.vsix --force
+code --install-extension /path/to/md-viewer-0.1.0-rc4.vsix --force
 ```
 
 On Remote SSH windows, install the extension on the remote side (command palette or remote `code` CLI session).
@@ -68,6 +68,11 @@ Status model:
 
 If `netCDF4` fails due MPI/module linkage, load cluster modules and re-run diagnostics.
 
+Latest tested HPC outcome for this release branch:
+- fresh system interpreter can start `BLOCKED` (expected)
+- bootstrap/interpreter selection can recover to usable runtime
+- `.parm7` and `.nc` bridge paths are expected to work after recovery on the validated cluster path
+
 ## 6) Typical HPC package install (manual)
 
 If you prefer manual setup:
@@ -108,3 +113,4 @@ Recommended next steps in error prompts:
 2. Confirm selected interpreter and capability matrix are sensible
 3. Open a known-good dataset via **Launch MD Viewer**
 4. On Remote SSH/HPC, confirm diagnostics were run on the remote extension host
+5. For quick manual validation, use [REMOTE_UI_SMOKE_CHECKLIST.md](REMOTE_UI_SMOKE_CHECKLIST.md)

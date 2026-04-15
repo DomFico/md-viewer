@@ -18,7 +18,7 @@ A molecular dynamics dataset viewer for VS Code with setup-panel based loading, 
 ## Install from VSIX
 
 ```bash
-code --install-extension md-viewer-0.1.0-rc3.vsix
+code --install-extension md-viewer-0.1.0-rc4.vsix
 ```
 
 Then run:
@@ -38,6 +38,7 @@ If you use VS Code Remote SSH, dependencies must be installed on the remote host
 
 See deployment guide:
 - [docs/INSTALLATION_LOCAL_REMOTE.md](docs/INSTALLATION_LOCAL_REMOTE.md)
+- [docs/REMOTE_UI_SMOKE_CHECKLIST.md](docs/REMOTE_UI_SMOKE_CHECKLIST.md)
 
 ---
 
