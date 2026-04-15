@@ -1,6 +1,6 @@
 {
   "name": "vscode-md-viewer",
-  "publisher": "domlab",
+  "publisher": "DominicFico",
   "displayName": "MD Viewer",
   "description": "General molecular dynamics dataset viewer",
   "version": "0.1.0",
