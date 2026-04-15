@@ -1,16 +1,42 @@
-# MD Viewer — VS Code Extension (v0.1 prototype)
+# MD Viewer — VS Code Extension
 
-A super-lightweight trajectory viewer for `.xyz` files, right inside VS Code.
+A molecular dynamics dataset viewer for VS Code with setup-panel based loading, topology pairing, and chunked binary trajectory support.
 
 ---
 
 ## What it does
 
-- Right-click any `.xyz` file in the Explorer → **Launch MD Viewer**
-- Opens a webview panel with a Three.js point-cloud renderer
-- Play/pause, scrub, and step through multi-frame XYZ trajectories
-- Atoms coloured by element (CPK palette)
-- Mouse drag to orbit, scroll to zoom, Space to play, arrow keys to step
+- Launch from Explorer on supported trajectory/topology files via **Launch MD Viewer**
+- Resolve dataset pairings in a setup panel with override controls
+- Render trajectories with residue-aware navigation and selection
+- Support trajectories: `.xyz`, `.xtc`, `.dcd`, `.trr`, `.nc`, `.rst7`
+- Support topologies: `.pdb`, `.gro`, `.parm7`
+- Stream binary trajectories through metadata-first init + chunked frame requests
+
+---
+
+## Install from VSIX
+
+```bash
+code --install-extension md-viewer-0.1.0-rcX.vsix
+```
+
+Then run:
+- **MD Viewer: Run Dependency Diagnostics**
+- **MD Viewer: Select Python Interpreter** (if needed)
+
+---
+
+## Dependency notes
+
+MD Viewer bridge/runtime dependencies:
+- Python 3.10+ reachable by PATH or `mdViewer.pythonInterpreter`
+- Python packages: `mdtraj`, `numpy`, `scipy` (and `netCDF4` recommended for some environments)
+
+If you use VS Code Remote SSH, dependencies must be installed on the remote host where the extension host runs.
+
+See deployment guide:
+- [docs/INSTALLATION_LOCAL_REMOTE.md](docs/INSTALLATION_LOCAL_REMOTE.md)
 
 ---
 
@@ -104,23 +130,10 @@ vscode-md-viewer/
 
 ---
 
-## Current limitations (v0.1 prototype)
+## Current limitations
 
-- Only `.xyz` format is supported
-- No bond inference or topology pairing
-- No solvent stripping
-- No atom picking or measurement tools
-- No side panel, no custom editor
-- Camera auto-fit runs once at load; very large trajectories may be slow to parse
-- CDN dependency on `cdn.jsdelivr.net` for Three.js (requires network access)
+- Large systems may still require careful Python/runtime dependency setup
+- Remote/HPC deployments require matching Python environment on remote extension host
+- Marketplace publishing metadata may still evolve as release process stabilizes
 
 ---
-
-## Next steps (not yet implemented)
-
-- Local Three.js bundle (no CDN dependency)
-- `.gro` / `.pdb` / `.xtc` format support
-- Bond inference from topology
-- Trajectory statistics panel
-- Atom picking / distance measurement
-- VS Code webview-to-extension message API for lazy frame loading

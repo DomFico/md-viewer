@@ -15,6 +15,11 @@ type DiagnosticsSummary = {
   selectedPythonExecutable: string;
   selectedPythonSource: 'setting' | 'env' | 'default';
   resolvedPythonPath: string | null;
+  extensionHost: {
+    isRemote: boolean;
+    remoteName: string | null;
+    locationLabel: string;
+  };
   pythonVersion: string | null;
   pythonImports: Record<string, PythonImportStatus>;
   bridgeScripts: Record<string, {
@@ -30,6 +35,15 @@ type DiagnosticsSummary = {
   };
   diagnosticsError?: string;
 };
+
+function extensionHostInfo(): DiagnosticsSummary['extensionHost'] {
+  const remoteName = vscode.env.remoteName ?? null;
+  return {
+    isRemote: Boolean(remoteName),
+    remoteName,
+    locationLabel: remoteName ? `remote (${remoteName})` : 'local',
+  };
+}
 
 function configuredPythonInterpreter(): string | null {
   const configured = vscode.workspace.getConfiguration('mdViewer').get<string>('pythonInterpreter');
@@ -130,6 +144,7 @@ function buildBridgeDiagnostics(scriptName: string): {
 }
 
 export async function runDependencyDiagnostics(): Promise<void> {
+  const hostInfo = extensionHostInfo();
   const configuredPython = configuredPythonInterpreter();
   const selectedPython = configuredPython ?? preferredPythonExecutable();
   const selectedSource = selectedPythonSource(configuredPython, selectedPython);
@@ -139,6 +154,7 @@ export async function runDependencyDiagnostics(): Promise<void> {
     selectedPythonExecutable: selectedPython,
     selectedPythonSource: selectedSource,
     resolvedPythonPath: resolvedPython,
+    extensionHost: hostInfo,
   });
 
   const pythonDiagnostics = runPythonImportDiagnostics(selectedPython);
@@ -147,11 +163,15 @@ export async function runDependencyDiagnostics(): Promise<void> {
   const parm7Bridge = buildBridgeDiagnostics(RUNTIME_BRIDGE_SCRIPTS.parm7Topology);
 
   const mdtrajOk = pythonDiagnostics.pythonImports?.mdtraj?.ok === true;
+  const missingImports = Object.entries(pythonDiagnostics.pythonImports)
+    .filter(([, status]) => !status?.ok)
+    .map(([name]) => name);
   const summary: DiagnosticsSummary = {
     configuredPythonInterpreter: configuredPython,
     selectedPythonExecutable: selectedPython,
     selectedPythonSource: selectedSource,
     resolvedPythonPath: resolvedPython,
+    extensionHost: hostInfo,
     pythonVersion: pythonDiagnostics.pythonVersion,
     pythonImports: pythonDiagnostics.pythonImports,
     bridgeScripts: {
@@ -174,6 +194,27 @@ export async function runDependencyDiagnostics(): Promise<void> {
   output.appendLine(JSON.stringify(summary, null, 2));
   output.show(true);
 
+  const blockingIssues: string[] = [];
+  if (!summary.resolvedPythonPath) {
+    blockingIssues.push(`Python executable not found: ${summary.selectedPythonExecutable}`);
+  }
+  if (!summary.capabilities.binaryTrajectoryBridgeReady) {
+    if (!mdtrajOk) {
+      blockingIssues.push('Python package "mdtraj" is missing');
+    }
+    if (!binaryBridge.selectedExists) {
+      blockingIssues.push(`Bridge script missing: ${binaryBridge.selectedPath}`);
+    }
+  }
+  if (!summary.capabilities.parm7TopologyBridgeReady) {
+    if (!parm7Bridge.selectedExists) {
+      blockingIssues.push(`Bridge script missing: ${parm7Bridge.selectedPath}`);
+    }
+  }
+  if (pythonDiagnostics.diagnosticsError) {
+    blockingIssues.push(`Python diagnostics failed: ${pythonDiagnostics.diagnosticsError}`);
+  }
+
   const hasBlockingIssue =
     !summary.resolvedPythonPath
     || !summary.capabilities.binaryTrajectoryBridgeReady
@@ -183,13 +224,39 @@ export async function runDependencyDiagnostics(): Promise<void> {
     emitCheckpoint('CHK_DEP_3_DIAGNOSTICS_RESULT', {
       ok: false,
       hasBlockingIssue: true,
+      blockingIssues,
+      missingImports,
+      extensionHost: hostInfo,
     });
-    vscode.window.showWarningMessage('MD Viewer diagnostics found missing dependencies. See "MD Viewer Diagnostics" output.');
+    const msg =
+      `MD Viewer diagnostics found missing dependencies on the ${hostInfo.locationLabel} extension host. `
+      + `Issues: ${blockingIssues.join('; ') || 'unknown dependency issue'}.`;
+    const action = await vscode.window.showWarningMessage(
+      msg,
+      'Select Python Interpreter',
+      'Open Python Interpreter Setting',
+      'Open Diagnostics Output'
+    );
+    if (action === 'Select Python Interpreter') {
+      await vscode.commands.executeCommand('md-viewer.selectPythonInterpreter');
+    } else if (action === 'Open Python Interpreter Setting') {
+      await vscode.commands.executeCommand('workbench.action.openSettings', 'mdViewer.pythonInterpreter');
+    } else if (action === 'Open Diagnostics Output') {
+      output.show(true);
+    }
   } else {
     emitCheckpoint('CHK_DEP_3_DIAGNOSTICS_RESULT', {
       ok: true,
       hasBlockingIssue: false,
+      missingImports,
+      extensionHost: hostInfo,
     });
-    vscode.window.showInformationMessage('MD Viewer diagnostics passed. Python bridge dependencies look available.');
+    const optionalMissing = missingImports.filter((name) => name !== 'netCDF4');
+    const suffix = optionalMissing.length > 0
+      ? ` Optional packages missing: ${optionalMissing.join(', ')}.`
+      : '';
+    vscode.window.showInformationMessage(
+      `MD Viewer diagnostics passed on ${hostInfo.locationLabel} extension host.${suffix}`
+    );
   }
 }

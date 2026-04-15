@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { openMdDatasetDefault, openMdDatasetWithOptionsPanel } from './commands/openMdSetupPanel';
 import { runDependencyDiagnostics } from './commands/runDependencyDiagnostics';
+import { selectPythonInterpreter } from './commands/selectPythonInterpreter';
 
 let lastConfiguredPythonInterpreter: string | null = null;
 
@@ -45,6 +46,10 @@ export function activate(context: vscode.ExtensionContext) {
     'md-viewer.runDependencyDiagnostics',
     () => runDependencyDiagnostics()
   );
+  const selectPythonInterpreterDisposable = vscode.commands.registerCommand(
+    'md-viewer.selectPythonInterpreter',
+    () => selectPythonInterpreter()
+  );
   const configWatcherDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration('mdViewer.pythonInterpreter')) {
       applyConfiguredPythonInterpreter();
@@ -55,6 +60,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(legacyOpenDisposable);
   context.subscriptions.push(legacyWithOptionsDisposable);
   context.subscriptions.push(diagnosticsDisposable);
+  context.subscriptions.push(selectPythonInterpreterDisposable);
   context.subscriptions.push(configWatcherDisposable);
 }
 

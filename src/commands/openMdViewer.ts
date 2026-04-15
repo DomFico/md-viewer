@@ -170,6 +170,52 @@ function parseEnvInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+type DependencyErrorGuidance = {
+  dependencyIssue: boolean;
+  userMessage: string;
+  actionableDetails: string[];
+  extensionHost: string;
+};
+
+function buildDependencyErrorGuidance(errorMessage: string): DependencyErrorGuidance {
+  const raw = errorMessage || '';
+  const msg = raw.toLowerCase();
+  const extensionHost = vscode.env.remoteName ? `remote (${vscode.env.remoteName})` : 'local';
+  const actionableDetails: string[] = [];
+  let dependencyIssue = false;
+
+  if (msg.includes('no module named') || msg.includes('modulenotfounderror')) {
+    dependencyIssue = true;
+    actionableDetails.push('Install required Python packages: mdtraj numpy scipy netCDF4');
+  }
+  if (msg.includes('failed to spawn') || msg.includes('enoent') || msg.includes('python')) {
+    dependencyIssue = true;
+    actionableDetails.push('Set mdViewer.pythonInterpreter to a valid Python executable');
+  }
+  if (msg.includes('bridge is missing') || msg.includes('binary_traj_bridge.py') || msg.includes('parm7_topology_bridge.py')) {
+    dependencyIssue = true;
+    actionableDetails.push('Reinstall/update the extension so runtime bridge scripts are present');
+  }
+
+  if (!dependencyIssue) {
+    return {
+      dependencyIssue: false,
+      userMessage: `MD Viewer: could not parse trajectory — ${errorMessage}`,
+      actionableDetails: [],
+      extensionHost,
+    };
+  }
+
+  actionableDetails.push(`Run "MD Viewer: Run Dependency Diagnostics" on the ${extensionHost} extension host`);
+  const dedupedDetails = Array.from(new Set(actionableDetails));
+  return {
+    dependencyIssue: true,
+    userMessage: `MD Viewer dependency/runtime issue on ${extensionHost}: ${dedupedDetails.join('; ')}.`,
+    actionableDetails: dedupedDetails,
+    extensionHost,
+  };
+}
+
 function isBinaryStreamingEnabled(format: BinaryTrajectoryFormat | undefined): boolean {
   if (!format) return false;
   if (process.env.MD_VIEWER_DISABLE_BINARY_STREAMING === '1') {
@@ -874,12 +920,22 @@ export async function openMdViewer(
           }
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
+          const guidance = buildDependencyErrorGuidance(msg);
           emitBinaryCheckpoint(binaryFlowFormat, 'parserSelected', {
             extTrajectory,
             parserSelected: true,
             parserName: trajParser.constructor.name,
             parseOutcome: 'error',
             error: msg,
+          });
+          emitCheckpoint('CHK_DEP_5_RUNTIME_FAILURE_GUIDANCE', {
+            trajectoryPath: dataset.trajectoryPath,
+            topologyPath: dataset.topologyPath ?? null,
+            trajectoryExt: extTrajectory,
+            dependencyIssue: guidance.dependencyIssue,
+            extensionHost: guidance.extensionHost,
+            actionableDetails: guidance.actionableDetails,
+            rawError: msg,
           });
           if (extTrajectory === '.nc') {
             emitCheckpoint('CHK_AMBER_3_NC_PARSER_SELECTED', {
@@ -900,7 +956,23 @@ export async function openMdViewer(
             });
           }
           logDebug('openMdViewer', `Trajectory parsing failed: ${msg}`);
-          void vscode.window.showErrorMessage(`MD Viewer: could not parse trajectory — ${msg}`);
+          if (guidance.dependencyIssue) {
+            void vscode.window
+              .showErrorMessage(
+                guidance.userMessage,
+                'Run Dependency Diagnostics',
+                'Select Python Interpreter'
+              )
+              .then((choice) => {
+                if (choice === 'Run Dependency Diagnostics') {
+                  void vscode.commands.executeCommand('md-viewer.runDependencyDiagnostics');
+                } else if (choice === 'Select Python Interpreter') {
+                  void vscode.commands.executeCommand('md-viewer.selectPythonInterpreter');
+                }
+              });
+          } else {
+            void vscode.window.showErrorMessage(`MD Viewer: could not parse trajectory — ${msg}`);
+          }
           return;
         }
       } else {
