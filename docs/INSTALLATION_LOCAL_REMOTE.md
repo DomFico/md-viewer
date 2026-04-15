@@ -5,27 +5,34 @@
 Local VSIX install:
 
 ```bash
-code --install-extension /path/to/md-viewer-0.1.0-rc2.vsix --force
+code --install-extension /path/to/md-viewer-0.1.0-rc3.vsix --force
 ```
 
-On Remote SSH windows, install the extension on the remote side (from the command palette or `code` CLI in a remote-capable session).
+On Remote SSH windows, install the extension on the remote side (command palette or remote `code` CLI session).
 
-## 2) Configure Python runtime
+## 2) Interpreter selection model (important on HPC)
 
-MD Viewer runs bridge scripts through Python in the extension host environment.
+MD Viewer executes Python bridge scripts in the extension host.
 
-Required packages:
+- Local window: extension host is local.
+- Remote SSH window: extension host is remote.
 
-```bash
-python -m pip install mdtraj numpy scipy netCDF4
-```
+Interpreter priority:
 
-Configure interpreter (optional but recommended for multi-env systems):
+1. `mdViewer.pythonInterpreter` (explicit setting)
+2. Last-known-good validated interpreter for this host/workspace
+3. Common venv locations (`~/.venvs/mdviewer/bin/python`, `.venv/bin/python`, etc.)
+4. Environment defaults (`python`, `python3`)
 
-- Command palette: `MD Viewer: Select Python Interpreter`
-- Settings key: `mdViewer.pythonInterpreter`
+This prevents silently sticking to broken system Python when a working user venv exists.
 
-Example setting:
+## 3) Commands for runtime setup
+
+- `MD Viewer: Run Dependency Diagnostics`
+- `MD Viewer: Select Python Interpreter`
+- `MD Viewer: Bootstrap Remote Python Runtime`
+
+Setting:
 
 ```json
 {
@@ -33,56 +40,71 @@ Example setting:
 }
 ```
 
-## 3) Run diagnostics
+## 4) Capability-based diagnostics output
 
-Run:
+Diagnostics now report capability families separately:
 
-- `MD Viewer: Run Dependency Diagnostics`
+- **Core runtime** (`mdtraj`, `numpy`, `scipy`)
+- **Amber topology (.parm7)**
+- **NetCDF trajectories (.nc)**
+- **Binary bridge scripts**
 
-Diagnostics report includes:
+Status model:
 
-- extension host location (`local` vs `remote (<name>)`)
-- selected Python executable and resolved path
-- import checks (`mdtraj`, `numpy`, `scipy`, `netCDF4`)
-- bridge script presence
-- runtime capability summary
+- `OK`: ready on selected interpreter
+- `DEGRADED`: partially usable / host-dependent (common for `.nc` on HPC without full netCDF stack)
+- `BLOCKED`: not runnable until missing requirements are fixed
 
-If diagnostics fail, use:
+## 5) Optional bootstrap flow for Remote SSH/HPC
 
-- `MD Viewer: Select Python Interpreter`
-- install missing Python packages in the same host where the extension runs
+`MD Viewer: Bootstrap Remote Python Runtime` can:
 
-## 4) Local vs Remote SSH/HPC behavior
+1. Create `~/.venvs/mdviewer`
+2. Upgrade `pip setuptools wheel`
+3. Install `numpy scipy mdtraj`
+4. Optionally install `netCDF4`
+5. Set `mdViewer.pythonInterpreter`
+6. Re-run diagnostics
 
-When VS Code is connected to a remote machine:
+If `netCDF4` fails due MPI/module linkage, load cluster modules and re-run diagnostics.
 
-- extension host runs remotely
-- Python and packages must exist on that remote machine
-- diagnostics must pass on that remote host
+## 6) Typical HPC package install (manual)
 
-This is the most common setup issue: local machine has packages, but remote host does not.
+If you prefer manual setup:
 
-## 5) Smoke-test after install
+```bash
+python3 -m venv ~/.venvs/mdviewer
+~/.venvs/mdviewer/bin/python -m pip install --upgrade pip setuptools wheel
+~/.venvs/mdviewer/bin/python -m pip install --upgrade numpy scipy mdtraj
+# optional, if supported by cluster environment:
+~/.venvs/mdviewer/bin/python -m pip install --upgrade netCDF4
+```
 
-Recommended quick checks:
+Then set:
 
-1. Open a known-good dataset and run **Launch MD Viewer**.
-2. Verify setup panel defaults populate and load succeeds.
-3. Run `MD Viewer: Run Dependency Diagnostics` and confirm required deps are available.
+```json
+{
+  "mdViewer.pythonInterpreter": "~/.venvs/mdviewer/bin/python"
+}
+```
 
-## 6) Troubleshooting
+## 7) Graceful failure guidance during open
 
-### Error: Python executable not found
+If runtime requirements are missing, open attempts now show format-specific actions, e.g.:
 
-- Set `mdViewer.pythonInterpreter` to a valid path
-- or ensure `python` is available in PATH for extension host process
+- `.parm7` blocked by missing core runtime packages
+- `.nc` unavailable/degraded on current interpreter
+- bridge scripts present vs actually missing (reported separately)
 
-### Error: `No module named mdtraj`
+Recommended next steps in error prompts:
 
-- Install packages into the interpreter used by `mdViewer.pythonInterpreter`
-- Re-run diagnostics and confirm import checks are `ok`
+1. Run diagnostics
+2. Select interpreter
+3. Bootstrap remote runtime
 
-### Bridge script missing
+## 8) Smoke-test checklist
 
-- Reinstall extension VSIX
-- Verify installation completed without truncation
+1. Run `MD Viewer: Run Dependency Diagnostics`
+2. Confirm selected interpreter and capability matrix are sensible
+3. Open a known-good dataset via **Launch MD Viewer**
+4. On Remote SSH/HPC, confirm diagnostics were run on the remote extension host

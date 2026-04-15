@@ -18,12 +18,13 @@ A molecular dynamics dataset viewer for VS Code with setup-panel based loading, 
 ## Install from VSIX
 
 ```bash
-code --install-extension md-viewer-0.1.0-rcX.vsix
+code --install-extension md-viewer-0.1.0-rc3.vsix
 ```
 
 Then run:
 - **MD Viewer: Run Dependency Diagnostics**
 - **MD Viewer: Select Python Interpreter** (if needed)
+- **MD Viewer: Bootstrap Remote Python Runtime** (optional, useful on Remote SSH/HPC)
 
 ---
 

@@ -24,7 +24,8 @@
     "onCommand:md-viewer.openDataset",
     "onCommand:md-viewer.openDatasetWithOptions",
     "onCommand:md-viewer.runDependencyDiagnostics",
-    "onCommand:md-viewer.selectPythonInterpreter"
+    "onCommand:md-viewer.selectPythonInterpreter",
+    "onCommand:md-viewer.bootstrapRemoteRuntime"
   ],
   "extensionKind": [
     "ui",
@@ -46,6 +47,11 @@
       {
         "command": "md-viewer.selectPythonInterpreter",
         "title": "Select Python Interpreter",
+        "category": "MD Viewer"
+      },
+      {
+        "command": "md-viewer.bootstrapRemoteRuntime",
+        "title": "Bootstrap Remote Python Runtime",
         "category": "MD Viewer"
       }
     ],
@@ -84,7 +90,7 @@
         "mdViewer.pythonInterpreter": {
           "type": "string",
           "default": "",
-          "description": "Optional absolute path or command name for the Python interpreter used by MD Viewer bridge scripts. Leave empty to use environment defaults."
+          "description": "Optional absolute path or command name for the Python interpreter used by MD Viewer bridge scripts. On Remote SSH/HPC, set this on the remote host interpreter."
         },
         "mdViewer.backgroundColor": {
           "type": "string",

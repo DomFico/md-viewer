@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { DatasetResolver, ResolveDatasetOptions } from '../parsing/DatasetResolver';
 import { ITrajectoryParser, ITopologyParser, TrajectoryData } from '../parsing/IParser';
 import { XyzParser } from '../parsing/xyz';
@@ -12,6 +13,7 @@ import { logDebug } from '../logger';
 import { DatasetNormalizer } from '../normalization/DatasetNormalizer';
 import { PayloadBuilder } from '../normalization/PayloadBuilder';
 import { emitCheckpoint } from '../runtimeCheckpoint';
+import { RUNTIME_BRIDGE_SCRIPTS, resolveRuntimeBridgePath } from '../runtime/bridgePaths';
 import {
   MdDatasetLoadOptions,
   createDefaultLoadOptions,
@@ -177,16 +179,44 @@ type DependencyErrorGuidance = {
   extensionHost: string;
 };
 
-function buildDependencyErrorGuidance(errorMessage: string): DependencyErrorGuidance {
+function buildDependencyErrorGuidance(
+  errorMessage: string,
+  context: { trajectoryExt: string; topologyExt: string }
+): DependencyErrorGuidance {
   const raw = errorMessage || '';
   const msg = raw.toLowerCase();
   const extensionHost = vscode.env.remoteName ? `remote (${vscode.env.remoteName})` : 'local';
   const actionableDetails: string[] = [];
   let dependencyIssue = false;
 
+  const binaryBridgePath = resolveRuntimeBridgePath(RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory);
+  const parm7BridgePath = resolveRuntimeBridgePath(RUNTIME_BRIDGE_SCRIPTS.parm7Topology);
+  const binaryBridgeExists = fs.existsSync(binaryBridgePath);
+  const parm7BridgeExists = fs.existsSync(parm7BridgePath);
+
+  const missingCorePackage =
+    msg.includes('no module named mdtraj')
+    || msg.includes('no module named numpy')
+    || msg.includes('no module named scipy')
+    || msg.includes('modulenotfounderror');
+  const missingNetcdfPackage = msg.includes('no module named netcdf4') || msg.includes('netcdf4');
+  const mpiRelatedIssue = msg.includes('mpi4py') || msg.includes('mpi');
+
+  if (missingCorePackage) {
+    dependencyIssue = true;
+    actionableDetails.push('Core runtime packages are required: mdtraj, numpy, scipy');
+    if (context.topologyExt === '.parm7') {
+      actionableDetails.push('.parm7 topology support is blocked until mdtraj imports successfully');
+    }
+  }
+  if ((context.trajectoryExt === '.nc' || context.trajectoryExt === '.rst7') && (missingNetcdfPackage || mpiRelatedIssue)) {
+    dependencyIssue = true;
+    actionableDetails.push('.nc/.rst7 capability is unavailable or degraded on the selected interpreter');
+    actionableDetails.push('On HPC, netCDF4 may require cluster MPI/Python modules before import succeeds');
+  }
   if (msg.includes('no module named') || msg.includes('modulenotfounderror')) {
     dependencyIssue = true;
-    actionableDetails.push('Install required Python packages: mdtraj numpy scipy netCDF4');
+    actionableDetails.push('Install required Python packages in the selected interpreter');
   }
   if (msg.includes('failed to spawn') || msg.includes('enoent') || msg.includes('python')) {
     dependencyIssue = true;
@@ -194,7 +224,17 @@ function buildDependencyErrorGuidance(errorMessage: string): DependencyErrorGuid
   }
   if (msg.includes('bridge is missing') || msg.includes('binary_traj_bridge.py') || msg.includes('parm7_topology_bridge.py')) {
     dependencyIssue = true;
-    actionableDetails.push('Reinstall/update the extension so runtime bridge scripts are present');
+    if (!binaryBridgeExists || !parm7BridgeExists) {
+      actionableDetails.push('Reinstall/update the extension so runtime bridge scripts are present');
+      if (!binaryBridgeExists) {
+        actionableDetails.push(`Missing bridge script: ${binaryBridgePath}`);
+      }
+      if (!parm7BridgeExists) {
+        actionableDetails.push(`Missing bridge script: ${parm7BridgePath}`);
+      }
+    } else {
+      actionableDetails.push('Bridge scripts are present; this looks like an interpreter/runtime dependency issue');
+    }
   }
 
   if (!dependencyIssue) {
@@ -207,6 +247,8 @@ function buildDependencyErrorGuidance(errorMessage: string): DependencyErrorGuid
   }
 
   actionableDetails.push(`Run "MD Viewer: Run Dependency Diagnostics" on the ${extensionHost} extension host`);
+  actionableDetails.push('Try "MD Viewer: Select Python Interpreter" to switch to a validated venv');
+  actionableDetails.push('Try "MD Viewer: Bootstrap Remote Python Runtime" to create ~/.venvs/mdviewer');
   const dedupedDetails = Array.from(new Set(actionableDetails));
   return {
     dependencyIssue: true,
@@ -920,7 +962,10 @@ export async function openMdViewer(
           }
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          const guidance = buildDependencyErrorGuidance(msg);
+          const guidance = buildDependencyErrorGuidance(msg, {
+            trajectoryExt: extTrajectory,
+            topologyExt: topologyExt || '',
+          });
           emitBinaryCheckpoint(binaryFlowFormat, 'parserSelected', {
             extTrajectory,
             parserSelected: true,
@@ -961,13 +1006,16 @@ export async function openMdViewer(
               .showErrorMessage(
                 guidance.userMessage,
                 'Run Dependency Diagnostics',
-                'Select Python Interpreter'
+                'Select Python Interpreter',
+                'Bootstrap Remote Runtime'
               )
               .then((choice) => {
                 if (choice === 'Run Dependency Diagnostics') {
                   void vscode.commands.executeCommand('md-viewer.runDependencyDiagnostics');
                 } else if (choice === 'Select Python Interpreter') {
                   void vscode.commands.executeCommand('md-viewer.selectPythonInterpreter');
+                } else if (choice === 'Bootstrap Remote Runtime') {
+                  void vscode.commands.executeCommand('md-viewer.bootstrapRemoteRuntime');
                 }
               });
           } else {

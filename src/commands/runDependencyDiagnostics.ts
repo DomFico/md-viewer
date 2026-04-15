@@ -1,47 +1,99 @@
 import * as fs from 'fs';
-import { spawnSync } from 'child_process';
 import * as vscode from 'vscode';
 import { bridgeCandidatePaths, RUNTIME_BRIDGE_SCRIPTS, resolveRuntimeBridgePath } from '../runtime/bridgePaths';
-import { preferredPythonExecutable, resolveExecutablePath } from '../runtime/pythonRuntime';
+import {
+  amberTopologyReady,
+  buildInterpreterCandidates,
+  coreRuntimeReady,
+  InterpreterCandidate,
+  interpreterSelectionReason,
+  netcdfImportReady,
+  preferredPythonExecutable,
+  resolveExecutablePath,
+  runPythonImportDiagnostics,
+  selectBestInterpreterCandidate,
+  workspaceRootsFromFolders,
+} from '../runtime/pythonRuntime';
+import {
+  CapabilityMatrixSummary,
+  CapabilityStatus,
+  getHostRuntimeState,
+  hostContextInfo,
+  setHostRuntimeState,
+} from '../runtime/hostRuntimeState';
 import { emitCheckpoint } from '../runtimeCheckpoint';
 
-type PythonImportStatus = {
-  ok: boolean;
-  error?: string;
+type CapabilityItem = {
+  status: CapabilityStatus;
+  reasons: string[];
+};
+
+type CandidateEvaluation = {
+  candidate: InterpreterCandidate;
+  resolvedPythonPath: string | null;
+  pythonVersion: string | null;
+  pythonImports: Record<string, { ok: boolean; error?: string }>;
+  diagnosticsError?: string;
+  coreReady: boolean;
+  amberReady: boolean;
+  netcdfImportReady: boolean;
+  missingImports: string[];
 };
 
 type DiagnosticsSummary = {
   configuredPythonInterpreter: string | null;
+  lastKnownGoodInterpreter: string | null;
   selectedPythonExecutable: string;
-  selectedPythonSource: 'setting' | 'env' | 'default';
+  selectedPythonSource: string;
+  selectedPythonReason: string;
   resolvedPythonPath: string | null;
   extensionHost: {
     isRemote: boolean;
     remoteName: string | null;
     locationLabel: string;
+    hostKey: string;
+    workspaceRoot: string | null;
   };
   pythonVersion: string | null;
-  pythonImports: Record<string, PythonImportStatus>;
+  pythonImports: Record<string, { ok: boolean; error?: string }>;
+  candidateEvaluations: Array<{
+    executable: string;
+    source: string;
+    detail: string;
+    resolvedPythonPath: string | null;
+    pythonVersion: string | null;
+    coreReady: boolean;
+    amberReady: boolean;
+    netcdfImportReady: boolean;
+    missingImports: string[];
+    diagnosticsError?: string;
+  }>;
   bridgeScripts: Record<string, {
     selectedPath: string;
     selectedExists: boolean;
     candidatePaths: string[];
   }>;
   capabilities: {
-    binaryTrajectoryBridgeReady: boolean;
-    parm7TopologyBridgeReady: boolean;
-    chunkedBinaryFormats: string[];
-    amberFormats: string[];
+    matrix: {
+      coreRuntime: CapabilityItem;
+      amberTopology: CapabilityItem;
+      netcdfTrajectories: CapabilityItem;
+      bridgeScripts: CapabilityItem;
+    };
+    summary: CapabilityMatrixSummary;
   };
   diagnosticsError?: string;
 };
 
 function extensionHostInfo(): DiagnosticsSummary['extensionHost'] {
+  const info = hostContextInfo();
   const remoteName = vscode.env.remoteName ?? null;
   return {
     isRemote: Boolean(remoteName),
     remoteName,
     locationLabel: remoteName ? `remote (${remoteName})` : 'local',
+    hostKey: info.key,
+    workspaceRoot: info.workspaceRoot,
   };
 }
 
@@ -51,83 +103,6 @@ function configuredPythonInterpreter(): string | null {
     return configured.trim();
   }
   return null;
-}
-
-function selectedPythonSource(configured: string | null, selected: string): 'setting' | 'env' | 'default' {
-  if (configured && configured === selected) return 'setting';
-  const envCandidates = [process.env.MD_VIEWER_PYTHON, process.env.PYTHON, process.env.PYTHON3]
-    .filter((value): value is string => Boolean(value && value.trim().length > 0))
-    .map((value) => value.trim());
-  if (envCandidates.includes(selected)) return 'env';
-  return 'default';
-}
-
-function parseJsonFromMixedStdout(stdout: string): any {
-  const firstBrace = stdout.indexOf('{');
-  const lastBrace = stdout.lastIndexOf('}');
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    throw new Error('No JSON object found in python diagnostics output.');
-  }
-  return JSON.parse(stdout.slice(firstBrace, lastBrace + 1));
-}
-
-function runPythonImportDiagnostics(pythonExecutable: string): {
-  pythonVersion: string | null;
-  pythonImports: Record<string, PythonImportStatus>;
-  diagnosticsError?: string;
-} {
-  const snippet = `
-import importlib, json, sys
-mods = ["mdtraj", "numpy", "scipy", "netCDF4"]
-status = {}
-for name in mods:
-    try:
-        importlib.import_module(name)
-        status[name] = {"ok": True}
-    except Exception as exc:
-        status[name] = {"ok": False, "error": str(exc)}
-print(json.dumps({
-    "pythonVersion": sys.version.split()[0],
-    "imports": status
-}))
-`.trim();
-
-  const result = spawnSync(pythonExecutable, ['-c', snippet], {
-    encoding: 'utf8',
-    timeout: 15000,
-  });
-
-  if (result.error) {
-    return {
-      pythonVersion: null,
-      pythonImports: {},
-      diagnosticsError: result.error.message,
-    };
-  }
-
-  if (result.status !== 0) {
-    return {
-      pythonVersion: null,
-      pythonImports: {},
-      diagnosticsError: (result.stderr || result.stdout || `python exited with code ${result.status}`).trim(),
-    };
-  }
-
-  try {
-    const parsed = parseJsonFromMixedStdout(result.stdout || '');
-    return {
-      pythonVersion: typeof parsed?.pythonVersion === 'string' ? parsed.pythonVersion : null,
-      pythonImports: parsed?.imports && typeof parsed.imports === 'object'
-        ? parsed.imports
-        : {},
-    };
-  } catch (err) {
-    return {
-      pythonVersion: null,
-      pythonImports: {},
-      diagnosticsError: err instanceof Error ? err.message : String(err),
-    };
-  }
 }
 
 function buildBridgeDiagnostics(scriptName: string): {
@@ -143,120 +118,344 @@ function buildBridgeDiagnostics(scriptName: string): {
   };
 }
 
-export async function runDependencyDiagnostics(): Promise<void> {
+function evaluateCandidate(candidate: InterpreterCandidate): CandidateEvaluation {
+  const resolvedPythonPath = resolveExecutablePath(candidate.executable);
+  const pythonDiagnostics = runPythonImportDiagnostics(candidate.executable);
+  const pythonImports = pythonDiagnostics.pythonImports || {};
+  const coreReady = coreRuntimeReady(pythonImports);
+  const amberReady = amberTopologyReady(pythonImports);
+  const ncReady = netcdfImportReady(pythonImports);
+  const missingImports = Object.entries(pythonImports)
+    .filter(([, status]) => !status?.ok)
+    .map(([name]) => name);
+
+  return {
+    candidate,
+    resolvedPythonPath,
+    pythonVersion: pythonDiagnostics.pythonVersion,
+    pythonImports,
+    diagnosticsError: pythonDiagnostics.diagnosticsError,
+    coreReady,
+    amberReady,
+    netcdfImportReady: ncReady,
+    missingImports,
+  };
+}
+
+function capabilityBlocked(reasons: string[]): CapabilityItem {
+  return { status: 'blocked', reasons };
+}
+
+function capabilityOk(reasons: string[]): CapabilityItem {
+  return { status: 'ok', reasons };
+}
+
+function capabilityDegraded(reasons: string[]): CapabilityItem {
+  return { status: 'degraded', reasons };
+}
+
+function buildCapabilityMatrix(input: {
+  selected: CandidateEvaluation;
+  binaryBridgeExists: boolean;
+  parm7BridgeExists: boolean;
+}): {
+  coreRuntime: CapabilityItem;
+  amberTopology: CapabilityItem;
+  netcdfTrajectories: CapabilityItem;
+  bridgeScripts: CapabilityItem;
+} {
+  const { selected, binaryBridgeExists, parm7BridgeExists } = input;
+
+  const bridgeScripts = (binaryBridgeExists && parm7BridgeExists)
+    ? capabilityOk(['Runtime bridge scripts are present.'])
+    : capabilityBlocked([
+      !binaryBridgeExists ? `Missing ${RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory}` : '',
+      !parm7BridgeExists ? `Missing ${RUNTIME_BRIDGE_SCRIPTS.parm7Topology}` : '',
+    ].filter((reason) => reason.length > 0));
+
+  const missingCore = ['mdtraj', 'numpy', 'scipy'].filter((name) => selected.pythonImports?.[name]?.ok !== true);
+  const coreRuntime = (selected.coreReady && !selected.diagnosticsError)
+    ? capabilityOk(['mdtraj + numpy + scipy imports succeeded.'])
+    : capabilityBlocked([
+      selected.diagnosticsError ? `Python diagnostics error: ${selected.diagnosticsError}` : '',
+      missingCore.length > 0 ? `Missing core packages: ${missingCore.join(', ')}` : '',
+    ].filter((reason) => reason.length > 0));
+
+  const amberTopology = (!parm7BridgeExists)
+    ? capabilityBlocked([`Missing ${RUNTIME_BRIDGE_SCRIPTS.parm7Topology}`])
+    : selected.amberReady
+      ? capabilityOk(['mdtraj import succeeded for .parm7 topology parsing.'])
+      : capabilityBlocked([
+        selected.diagnosticsError ? `Python diagnostics error: ${selected.diagnosticsError}` : '',
+        selected.pythonImports?.mdtraj?.ok === false ? `mdtraj import failed: ${selected.pythonImports.mdtraj.error || 'unknown error'}` : '',
+      ].filter((reason) => reason.length > 0));
+
+  let netcdfTrajectories: CapabilityItem;
+  if (!binaryBridgeExists) {
+    netcdfTrajectories = capabilityBlocked([`Missing ${RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory}`]);
+  } else if (!selected.coreReady) {
+    netcdfTrajectories = capabilityBlocked(['Core runtime is blocked (mdtraj/numpy/scipy required before .nc can run).']);
+  } else if (selected.netcdfImportReady) {
+    netcdfTrajectories = capabilityOk(['netCDF4 import succeeded on selected interpreter.']);
+  } else {
+    netcdfTrajectories = capabilityDegraded([
+      'netCDF4 import failed on selected interpreter.',
+      'Some HPC environments can still open .nc depending on mdtraj build/runtime modules, but behavior is host-dependent.',
+    ]);
+  }
+
+  return {
+    coreRuntime,
+    amberTopology,
+    netcdfTrajectories,
+    bridgeScripts,
+  };
+}
+
+function summarizeCapabilityMatrix(matrix: {
+  coreRuntime: CapabilityItem;
+  amberTopology: CapabilityItem;
+  netcdfTrajectories: CapabilityItem;
+  bridgeScripts: CapabilityItem;
+}): CapabilityMatrixSummary {
+  return {
+    coreRuntime: matrix.coreRuntime.status,
+    amberTopology: matrix.amberTopology.status,
+    netcdfTrajectories: matrix.netcdfTrajectories.status,
+    bridgeScripts: matrix.bridgeScripts.status,
+  };
+}
+
+function formatCapabilityLine(label: string, capability: CapabilityItem): string {
+  const reason = capability.reasons.length > 0 ? ` (${capability.reasons.join(' | ')})` : '';
+  return `${label}: ${capability.status.toUpperCase()}${reason}`;
+}
+
+function withReasonText(lines: string[]): string {
+  return lines
+    .filter((line) => line.trim().length > 0)
+    .map((line) => `- ${line}`)
+    .join('\n');
+}
+
+export async function runDependencyDiagnostics(context: vscode.ExtensionContext): Promise<void> {
   const hostInfo = extensionHostInfo();
   const configuredPython = configuredPythonInterpreter();
-  const selectedPython = configuredPython ?? preferredPythonExecutable();
-  const selectedSource = selectedPythonSource(configuredPython, selectedPython);
-  const resolvedPython = resolveExecutablePath(selectedPython);
-  emitCheckpoint('CHK_DEP_1_DIAGNOSTICS_STARTED', {
-    configuredPythonInterpreter: configuredPython,
-    selectedPythonExecutable: selectedPython,
-    selectedPythonSource: selectedSource,
-    resolvedPythonPath: resolvedPython,
-    extensionHost: hostInfo,
+  const lastKnownState = getHostRuntimeState(context);
+  const envLastKnown = (process.env.MD_VIEWER_LAST_GOOD_PYTHON || '').trim();
+  const lastKnownGoodInterpreter = lastKnownState?.interpreter || (envLastKnown.length > 0 ? envLastKnown : null);
+
+  const candidates = buildInterpreterCandidates({
+    configuredInterpreter: configuredPython,
+    lastKnownGoodInterpreter,
+    workspaceRoots: workspaceRootsFromFolders(vscode.workspace.workspaceFolders),
   });
 
-  const pythonDiagnostics = runPythonImportDiagnostics(selectedPython);
+  emitCheckpoint('CHK_DEP_1_DIAGNOSTICS_STARTED', {
+    configuredPythonInterpreter: configuredPython,
+    lastKnownGoodInterpreter,
+    extensionHost: hostInfo,
+    candidateExecutables: candidates.map((candidate) => ({
+      executable: candidate.executable,
+      source: candidate.source,
+      detail: candidate.detail,
+    })),
+  });
+
+  const evaluations = candidates.map((candidate) => evaluateCandidate(candidate));
+
+  emitCheckpoint('CHK_DEP_6_INTERPRETER_CANDIDATES', {
+    extensionHost: hostInfo,
+    evaluations: evaluations.map((evaluation) => ({
+      executable: evaluation.candidate.executable,
+      source: evaluation.candidate.source,
+      detail: evaluation.candidate.detail,
+      resolvedPythonPath: evaluation.resolvedPythonPath,
+      pythonVersion: evaluation.pythonVersion,
+      coreReady: evaluation.coreReady,
+      amberReady: evaluation.amberReady,
+      netcdfImportReady: evaluation.netcdfImportReady,
+      missingImports: evaluation.missingImports,
+      diagnosticsError: evaluation.diagnosticsError,
+    })),
+  });
+
+  const chosen = selectBestInterpreterCandidate(evaluations)
+    || (evaluations.length > 0 ? evaluations[0] : null);
+
+  const fallbackCandidate = preferredPythonExecutable();
+  const selectedEval = chosen || evaluateCandidate({
+    executable: fallbackCandidate,
+    source: 'default',
+    detail: 'Preferred Python fallback',
+  });
+
+  const selectedReason = interpreterSelectionReason({
+    chosenSource: selectedEval.candidate.source,
+    chosenExecutable: selectedEval.candidate.executable,
+    chosenCoreReady: selectedEval.coreReady,
+  });
+
+  process.env.MD_VIEWER_PYTHON = selectedEval.candidate.executable;
 
   const binaryBridge = buildBridgeDiagnostics(RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory);
   const parm7Bridge = buildBridgeDiagnostics(RUNTIME_BRIDGE_SCRIPTS.parm7Topology);
 
-  const mdtrajOk = pythonDiagnostics.pythonImports?.mdtraj?.ok === true;
-  const missingImports = Object.entries(pythonDiagnostics.pythonImports)
-    .filter(([, status]) => !status?.ok)
-    .map(([name]) => name);
+  const capabilityMatrix = buildCapabilityMatrix({
+    selected: selectedEval,
+    binaryBridgeExists: binaryBridge.selectedExists,
+    parm7BridgeExists: parm7Bridge.selectedExists,
+  });
+  const capabilitySummary = summarizeCapabilityMatrix(capabilityMatrix);
+
+  emitCheckpoint('CHK_DEP_7_INTERPRETER_SELECTED', {
+    selectedPythonExecutable: selectedEval.candidate.executable,
+    selectedPythonSource: selectedEval.candidate.source,
+    selectedPythonReason: selectedReason,
+    selectedCoreReady: selectedEval.coreReady,
+    selectedAmberReady: selectedEval.amberReady,
+    selectedNetcdfImportReady: selectedEval.netcdfImportReady,
+    extensionHost: hostInfo,
+  });
+
+  emitCheckpoint('CHK_DEP_8_CAPABILITY_MATRIX', {
+    selectedPythonExecutable: selectedEval.candidate.executable,
+    extensionHost: hostInfo,
+    matrix: capabilityMatrix,
+    summary: capabilitySummary,
+  });
+
+  if (selectedEval.coreReady) {
+    process.env.MD_VIEWER_LAST_GOOD_PYTHON = selectedEval.candidate.executable;
+    await setHostRuntimeState(context, {
+      interpreter: selectedEval.candidate.executable,
+      validatedAt: new Date().toISOString(),
+      extensionHost: hostInfo.locationLabel,
+      workspaceRoot: hostInfo.workspaceRoot,
+      capabilities: capabilitySummary,
+      selectionReason: selectedReason,
+    });
+    emitCheckpoint('CHK_DEP_9_HOST_RUNTIME_STATE_UPDATED', {
+      interpreter: selectedEval.candidate.executable,
+      validatedAt: new Date().toISOString(),
+      extensionHost: hostInfo,
+      capabilities: capabilitySummary,
+    });
+  }
+
   const summary: DiagnosticsSummary = {
     configuredPythonInterpreter: configuredPython,
-    selectedPythonExecutable: selectedPython,
-    selectedPythonSource: selectedSource,
-    resolvedPythonPath: resolvedPython,
+    lastKnownGoodInterpreter,
+    selectedPythonExecutable: selectedEval.candidate.executable,
+    selectedPythonSource: selectedEval.candidate.source,
+    selectedPythonReason: selectedReason,
+    resolvedPythonPath: selectedEval.resolvedPythonPath,
     extensionHost: hostInfo,
-    pythonVersion: pythonDiagnostics.pythonVersion,
-    pythonImports: pythonDiagnostics.pythonImports,
+    pythonVersion: selectedEval.pythonVersion,
+    pythonImports: selectedEval.pythonImports,
+    candidateEvaluations: evaluations.map((evaluation) => ({
+      executable: evaluation.candidate.executable,
+      source: evaluation.candidate.source,
+      detail: evaluation.candidate.detail,
+      resolvedPythonPath: evaluation.resolvedPythonPath,
+      pythonVersion: evaluation.pythonVersion,
+      coreReady: evaluation.coreReady,
+      amberReady: evaluation.amberReady,
+      netcdfImportReady: evaluation.netcdfImportReady,
+      missingImports: evaluation.missingImports,
+      diagnosticsError: evaluation.diagnosticsError,
+    })),
     bridgeScripts: {
       [RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory]: binaryBridge,
       [RUNTIME_BRIDGE_SCRIPTS.parm7Topology]: parm7Bridge,
     },
     capabilities: {
-      binaryTrajectoryBridgeReady: mdtrajOk && binaryBridge.selectedExists,
-      parm7TopologyBridgeReady: mdtrajOk && parm7Bridge.selectedExists,
-      chunkedBinaryFormats: ['xtc', 'dcd', 'trr', 'nc', 'rst7'],
-      amberFormats: ['nc', 'parm7', 'rst7'],
+      matrix: capabilityMatrix,
+      summary: capabilitySummary,
     },
-    diagnosticsError: pythonDiagnostics.diagnosticsError,
+    diagnosticsError: selectedEval.diagnosticsError,
   };
+
   emitCheckpoint('CHK_DEP_2_DIAGNOSTICS_SUMMARY', summary);
 
   const output = vscode.window.createOutputChannel('MD Viewer Diagnostics');
   output.clear();
   output.appendLine('MD Viewer dependency diagnostics');
   output.appendLine(JSON.stringify(summary, null, 2));
+  output.appendLine('');
+  output.appendLine('Capability matrix:');
+  output.appendLine(formatCapabilityLine('Core runtime', capabilityMatrix.coreRuntime));
+  output.appendLine(formatCapabilityLine('Amber topology (.parm7)', capabilityMatrix.amberTopology));
+  output.appendLine(formatCapabilityLine('NetCDF trajectories (.nc)', capabilityMatrix.netcdfTrajectories));
+  output.appendLine(formatCapabilityLine('Binary bridge scripts', capabilityMatrix.bridgeScripts));
   output.show(true);
 
-  const blockingIssues: string[] = [];
-  if (!summary.resolvedPythonPath) {
-    blockingIssues.push(`Python executable not found: ${summary.selectedPythonExecutable}`);
-  }
-  if (!summary.capabilities.binaryTrajectoryBridgeReady) {
-    if (!mdtrajOk) {
-      blockingIssues.push('Python package "mdtraj" is missing');
-    }
-    if (!binaryBridge.selectedExists) {
-      blockingIssues.push(`Bridge script missing: ${binaryBridge.selectedPath}`);
-    }
-  }
-  if (!summary.capabilities.parm7TopologyBridgeReady) {
-    if (!parm7Bridge.selectedExists) {
-      blockingIssues.push(`Bridge script missing: ${parm7Bridge.selectedPath}`);
-    }
-  }
-  if (pythonDiagnostics.diagnosticsError) {
-    blockingIssues.push(`Python diagnostics failed: ${pythonDiagnostics.diagnosticsError}`);
-  }
-
-  const hasBlockingIssue =
-    !summary.resolvedPythonPath
-    || !summary.capabilities.binaryTrajectoryBridgeReady
-    || !summary.capabilities.parm7TopologyBridgeReady;
+  const hasBlockingIssue = [
+    capabilityMatrix.coreRuntime,
+    capabilityMatrix.amberTopology,
+    capabilityMatrix.bridgeScripts,
+  ].some((capability) => capability.status === 'blocked');
 
   if (hasBlockingIssue) {
+    const blockingLines = [
+      ...capabilityMatrix.coreRuntime.reasons,
+      ...capabilityMatrix.amberTopology.reasons,
+      ...capabilityMatrix.bridgeScripts.reasons,
+    ];
+
     emitCheckpoint('CHK_DEP_3_DIAGNOSTICS_RESULT', {
       ok: false,
       hasBlockingIssue: true,
-      blockingIssues,
-      missingImports,
       extensionHost: hostInfo,
+      selectedPythonExecutable: selectedEval.candidate.executable,
+      selectedPythonSource: selectedEval.candidate.source,
+      capabilitySummary,
+      blockingIssues: blockingLines,
     });
-    const msg =
-      `MD Viewer diagnostics found missing dependencies on the ${hostInfo.locationLabel} extension host. `
-      + `Issues: ${blockingIssues.join('; ') || 'unknown dependency issue'}.`;
+
     const action = await vscode.window.showWarningMessage(
-      msg,
+      `MD Viewer runtime is blocked on ${hostInfo.locationLabel}.\n${withReasonText(blockingLines)}`,
       'Select Python Interpreter',
-      'Open Python Interpreter Setting',
+      'Bootstrap Remote Runtime',
       'Open Diagnostics Output'
     );
     if (action === 'Select Python Interpreter') {
       await vscode.commands.executeCommand('md-viewer.selectPythonInterpreter');
-    } else if (action === 'Open Python Interpreter Setting') {
-      await vscode.commands.executeCommand('workbench.action.openSettings', 'mdViewer.pythonInterpreter');
+    } else if (action === 'Bootstrap Remote Runtime') {
+      await vscode.commands.executeCommand('md-viewer.bootstrapRemoteRuntime');
     } else if (action === 'Open Diagnostics Output') {
       output.show(true);
     }
-  } else {
-    emitCheckpoint('CHK_DEP_3_DIAGNOSTICS_RESULT', {
-      ok: true,
-      hasBlockingIssue: false,
-      missingImports,
-      extensionHost: hostInfo,
-    });
-    const optionalMissing = missingImports.filter((name) => name !== 'netCDF4');
-    const suffix = optionalMissing.length > 0
-      ? ` Optional packages missing: ${optionalMissing.join(', ')}.`
-      : '';
-    vscode.window.showInformationMessage(
-      `MD Viewer diagnostics passed on ${hostInfo.locationLabel} extension host.${suffix}`
-    );
+    return;
   }
+
+  emitCheckpoint('CHK_DEP_3_DIAGNOSTICS_RESULT', {
+    ok: true,
+    hasBlockingIssue: false,
+    extensionHost: hostInfo,
+    selectedPythonExecutable: selectedEval.candidate.executable,
+    selectedPythonSource: selectedEval.candidate.source,
+    capabilitySummary,
+  });
+
+  if (capabilityMatrix.netcdfTrajectories.status === 'degraded') {
+    const action = await vscode.window.showWarningMessage(
+      `MD Viewer diagnostics passed on ${hostInfo.locationLabel}, but .nc support is DEGRADED on interpreter ${selectedEval.candidate.executable}.\n${withReasonText(capabilityMatrix.netcdfTrajectories.reasons)}`,
+      'Select Python Interpreter',
+      'Bootstrap Remote Runtime',
+      'Open Diagnostics Output'
+    );
+    if (action === 'Select Python Interpreter') {
+      await vscode.commands.executeCommand('md-viewer.selectPythonInterpreter');
+    } else if (action === 'Bootstrap Remote Runtime') {
+      await vscode.commands.executeCommand('md-viewer.bootstrapRemoteRuntime');
+    } else if (action === 'Open Diagnostics Output') {
+      output.show(true);
+    }
+    return;
+  }
+
+  void vscode.window.showInformationMessage(
+    `MD Viewer diagnostics passed on ${hostInfo.locationLabel}. Core, .parm7, and .nc capabilities are ready.`
+  );
 }

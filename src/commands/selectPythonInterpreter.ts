@@ -1,10 +1,16 @@
 import * as vscode from 'vscode';
 import { emitCheckpoint } from '../runtimeCheckpoint';
-import { preferredPythonExecutable, resolveExecutablePath } from '../runtime/pythonRuntime';
+import {
+  buildInterpreterCandidates,
+  preferredPythonExecutable,
+  resolveExecutablePath,
+  workspaceRootsFromFolders,
+} from '../runtime/pythonRuntime';
+import { getHostRuntimeState } from '../runtime/hostRuntimeState';
 
 type InterpreterPick = vscode.QuickPickItem & {
   value: string;
-  entryType: 'configured' | 'resolved' | 'fallback' | 'auto' | 'browse';
+  entryType: 'configured' | 'resolved' | 'fallback' | 'auto' | 'browse' | 'cached' | 'venv' | 'env' | 'default';
 };
 
 function settingTarget(): vscode.ConfigurationTarget {
@@ -14,30 +20,49 @@ function settingTarget(): vscode.ConfigurationTarget {
   return vscode.ConfigurationTarget.Global;
 }
 
-function addCandidate(
+function asPickLabel(source: InterpreterPick['entryType'], executable: string): string {
+  switch (source) {
+    case 'configured':
+      return `Configured: ${executable}`;
+    case 'cached':
+      return `Last-known-good: ${executable}`;
+    case 'venv':
+      return `Venv: ${executable}`;
+    case 'env':
+      return `Env: ${executable}`;
+    case 'default':
+      return `Default: ${executable}`;
+    default:
+      return executable;
+  }
+}
+
+function pushCandidatePick(
   picks: InterpreterPick[],
   seen: Set<string>,
-  label: string,
-  value: string,
-  entryType: InterpreterPick['entryType']
+  source: InterpreterPick['entryType'],
+  executable: string,
+  detail: string
 ): void {
-  const normalized = value.trim();
+  const normalized = executable.trim();
   if (!normalized || seen.has(normalized)) return;
   seen.add(normalized);
   const resolved = resolveExecutablePath(normalized);
   picks.push({
-    label,
+    label: asPickLabel(source, normalized),
     value: normalized,
-    entryType,
+    entryType: source,
     description: resolved ? `Resolved: ${resolved}` : 'Not currently resolvable from PATH',
+    detail,
   });
 }
 
-export async function selectPythonInterpreter(): Promise<void> {
+export async function selectPythonInterpreter(context: vscode.ExtensionContext): Promise<void> {
   const config = vscode.workspace.getConfiguration('mdViewer');
   const configured = (config.get<string>('pythonInterpreter') || '').trim();
   const preferred = preferredPythonExecutable();
   const target = settingTarget();
+  const hostState = getHostRuntimeState(context);
 
   const picks: InterpreterPick[] = [];
   const seen = new Set<string>();
@@ -47,16 +72,20 @@ export async function selectPythonInterpreter(): Promise<void> {
     value: '',
     entryType: 'auto',
     description: `Current auto value: ${preferred}`,
-    detail: 'Clears mdViewer.pythonInterpreter and falls back to environment/PATH.',
+    detail: 'Clears mdViewer.pythonInterpreter and falls back to discovered defaults.',
   });
 
-  if (configured) {
-    addCandidate(picks, seen, `Configured: ${configured}`, configured, 'configured');
-  }
+  const candidates = buildInterpreterCandidates({
+    configuredInterpreter: configured || null,
+    lastKnownGoodInterpreter: hostState?.interpreter || null,
+    workspaceRoots: workspaceRootsFromFolders(vscode.workspace.workspaceFolders),
+  });
 
-  const common = ['python', 'python3', 'python3.12', 'python3.11', 'python3.10', preferred];
-  for (const candidate of common) {
-    addCandidate(picks, seen, candidate, candidate, 'resolved');
+  for (const candidate of candidates) {
+    const entryType = candidate.source === 'setting'
+      ? 'configured'
+      : candidate.source;
+    pushCandidatePick(picks, seen, entryType, candidate.executable, candidate.detail);
   }
 
   picks.push({
@@ -103,7 +132,7 @@ export async function selectPythonInterpreter(): Promise<void> {
       selectedPythonExecutable: preferredPythonExecutable(),
       extensionHost: vscode.env.remoteName ? `remote:${vscode.env.remoteName}` : 'local',
     });
-    void vscode.window.showInformationMessage('MD Viewer Python interpreter reset to environment default.');
+    void vscode.window.showInformationMessage('MD Viewer Python interpreter reset to auto-discovery defaults.');
     return;
   }
 
