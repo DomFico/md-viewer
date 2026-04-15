@@ -177,7 +177,16 @@ type DependencyErrorGuidance = {
   userMessage: string;
   actionableDetails: string[];
   extensionHost: string;
+  actualCause: string | null;
 };
+
+function extractActualBridgeCause(errorMessage: string): string | null {
+  const match = errorMessage.match(/actual bridge error:\s*(.+)$/i);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+  return null;
+}
 
 function buildDependencyErrorGuidance(
   errorMessage: string,
@@ -185,6 +194,7 @@ function buildDependencyErrorGuidance(
 ): DependencyErrorGuidance {
   const raw = errorMessage || '';
   const msg = raw.toLowerCase();
+  const actualCause = extractActualBridgeCause(raw);
   const extensionHost = vscode.env.remoteName ? `remote (${vscode.env.remoteName})` : 'local';
   const actionableDetails: string[] = [];
   let dependencyIssue = false;
@@ -235,6 +245,9 @@ function buildDependencyErrorGuidance(
   if (ncBackendFormatError) {
     dependencyIssue = true;
     actionableDetails.push('.nc runtime bridge is incompatible with this scipy/netcdf backend on the selected interpreter');
+    if (actualCause) {
+      actionableDetails.push(`Actual backend error: ${actualCause}`);
+    }
     actionableDetails.push('Select another interpreter/venv and rerun diagnostics before retrying .nc');
   }
   if (msg.includes('no module named') || msg.includes('modulenotfounderror')) {
@@ -266,6 +279,7 @@ function buildDependencyErrorGuidance(
       userMessage: `MD Viewer: could not parse trajectory — ${errorMessage}`,
       actionableDetails: [],
       extensionHost,
+      actualCause,
     };
   }
 
@@ -278,6 +292,7 @@ function buildDependencyErrorGuidance(
     userMessage: `MD Viewer dependency/runtime issue on ${extensionHost}: ${dedupedDetails.join('; ')}.`,
     actionableDetails: dedupedDetails,
     extensionHost,
+    actualCause,
   };
 }
 
@@ -1002,6 +1017,8 @@ export async function openMdViewer(
             trajectoryExt: extTrajectory,
             dependencyIssue: guidance.dependencyIssue,
             extensionHost: guidance.extensionHost,
+            userMessage: guidance.userMessage,
+            actualCause: guidance.actualCause,
             actionableDetails: guidance.actionableDetails,
             rawError: msg,
           });

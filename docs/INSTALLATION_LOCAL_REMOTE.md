@@ -72,6 +72,7 @@ Latest tested HPC outcome for this release branch:
 - fresh system interpreter can start `BLOCKED` (expected)
 - bootstrap/interpreter selection can recover to usable runtime
 - `.parm7` and `.nc` bridge paths are expected to work after recovery on the validated cluster path
+- for the tested Compute Canada / Alliance `nibi` environment, see [HPC_COMPUTECANADA_NIBI_TROUBLESHOOTING.md](HPC_COMPUTECANADA_NIBI_TROUBLESHOOTING.md)
 
 ## 6) Typical HPC package install (manual)
 

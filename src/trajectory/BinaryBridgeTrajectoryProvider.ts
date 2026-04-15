@@ -53,6 +53,11 @@ interface BridgeFullResponse extends BridgeResponseBase {
   frames?: number[][];
 }
 
+type BridgeFailureDetails = {
+  actualError: string | null;
+  source: 'stdout_json' | 'stderr_json' | 'stderr_text' | 'stdout_text' | 'none';
+};
+
 export class BinaryBridgeTrajectoryProvider implements TrajectoryProvider {
   private metadataCache?: TrajectoryProviderMetadata;
   private readonly frameCache = new Map<number, Float32Array>();
@@ -258,7 +263,16 @@ export class BinaryBridgeTrajectoryProvider implements TrajectoryProvider {
         });
 
         if (code !== 0) {
-          reject(new Error(`${this.options.format.toUpperCase()} bridge failed with code ${code}. stderr: ${stderrData}`));
+          const failureDetails = extractBridgeFailureDetails(fullOutput, stderrData);
+          emitCheckpoint(this.options.checkpoints.parsed, {
+            jsonParseSucceeded: failureDetails.source === 'stdout_json' || failureDetails.source === 'stderr_json',
+            mode: request.mode,
+            bridgeFailureSource: failureDetails.source,
+            extractedError: failureDetails.actualError,
+            stdoutFirst200Chars: summarizeText(fullOutput),
+            stderrFirst200Chars: summarizeText(stderrData),
+          });
+          reject(new Error(buildBridgeFailureMessage(this.options.format, code, failureDetails)));
           return;
         }
 
@@ -334,4 +348,67 @@ function parseBridgeJson(output: string): unknown {
     const candidate = output.slice(firstBrace, lastBrace + 1);
     return JSON.parse(candidate);
   }
+}
+
+function extractBridgeFailureDetails(stdout: string, stderr: string): BridgeFailureDetails {
+  const stdoutJsonError = parseBridgeErrorField(stdout);
+  if (stdoutJsonError) {
+    return {
+      actualError: stdoutJsonError,
+      source: 'stdout_json',
+    };
+  }
+
+  const stderrJsonError = parseBridgeErrorField(stderr);
+  if (stderrJsonError) {
+    return {
+      actualError: stderrJsonError,
+      source: 'stderr_json',
+    };
+  }
+
+  const stderrText = stderr.trim();
+  if (stderrText.length > 0) {
+    return {
+      actualError: stderrText,
+      source: 'stderr_text',
+    };
+  }
+
+  const stdoutText = stdout.trim();
+  if (stdoutText.length > 0) {
+    return {
+      actualError: stdoutText,
+      source: 'stdout_text',
+    };
+  }
+
+  return {
+    actualError: null,
+    source: 'none',
+  };
+}
+
+function parseBridgeErrorField(text: string): string | null {
+  try {
+    const parsed = parseBridgeJson(text) as { error?: unknown };
+    if (parsed && typeof parsed === 'object' && typeof parsed.error === 'string' && parsed.error.trim().length > 0) {
+      return parsed.error.trim();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function buildBridgeFailureMessage(
+  format: BridgeTrajectoryFormat,
+  code: number | null,
+  details: BridgeFailureDetails
+): string {
+  const codeLabel = code === null ? 'unknown' : String(code);
+  if (details.actualError) {
+    return `${format.toUpperCase()} bridge failed with code ${codeLabel}. Actual bridge error: ${details.actualError}`;
+  }
+  return `${format.toUpperCase()} bridge failed with code ${codeLabel}. Bridge returned no structured error output.`;
 }

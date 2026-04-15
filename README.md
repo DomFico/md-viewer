@@ -39,6 +39,7 @@ If you use VS Code Remote SSH, dependencies must be installed on the remote host
 See deployment guide:
 - [docs/INSTALLATION_LOCAL_REMOTE.md](docs/INSTALLATION_LOCAL_REMOTE.md)
 - [docs/REMOTE_UI_SMOKE_CHECKLIST.md](docs/REMOTE_UI_SMOKE_CHECKLIST.md)
+- [docs/HPC_COMPUTECANADA_NIBI_TROUBLESHOOTING.md](docs/HPC_COMPUTECANADA_NIBI_TROUBLESHOOTING.md)
 
 ---
 
