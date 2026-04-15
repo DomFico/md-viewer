@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import tempfile
 import warnings
 from typing import Any, Dict, List, Optional
 
@@ -11,9 +12,19 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-import mdtraj as md
+try:
+    import mdtraj as md
+    MDTRAJ_IMPORT_ERROR: Optional[str] = None
+except Exception as err:  # noqa: BLE001
+    md = None
+    MDTRAJ_IMPORT_ERROR = str(err)
 
 HANDLE_RETURNS_ANGSTROM_FORMATS = {'dcd', 'nc', 'rst7'}
+
+
+def ensure_mdtraj_available() -> None:
+    if md is None:
+        raise RuntimeError(f'mdtraj import failed: {MDTRAJ_IMPORT_ERROR or "unknown error"}')
 
 
 def infer_source_format(traj_path: str, explicit_format: Optional[str] = None) -> str:
@@ -21,6 +32,121 @@ def infer_source_format(traj_path: str, explicit_format: Optional[str] = None) -
         return explicit_format.lower()
     _, ext = os.path.splitext(traj_path)
     return ext.lower().lstrip('.')
+
+
+def run_capability_probe(source_format: str) -> Dict[str, Any]:
+    normalized_format = (source_format or '').strip().lower()
+    if normalized_format == 'nc':
+        return run_nc_capability_probe()
+
+    if md is None:
+        return {
+            'mode': 'capability',
+            'capability': 'binary_trajectory_bridge',
+            'sourceFormat': normalized_format or 'unknown',
+            'ok': False,
+            'status': 'blocked',
+            'details': {
+                'mdtrajImportOk': False,
+                'error': MDTRAJ_IMPORT_ERROR or 'mdtraj import failed',
+            },
+        }
+
+    return {
+        'mode': 'capability',
+        'capability': 'binary_trajectory_bridge',
+        'sourceFormat': normalized_format or 'unknown',
+        'ok': True,
+        'status': 'ok',
+        'details': {
+            'mdtrajImportOk': True,
+        },
+    }
+
+
+def run_nc_capability_probe() -> Dict[str, Any]:
+    details: Dict[str, Any] = {
+        'mdtrajImportOk': md is not None,
+        'runtimeProbe': 'mdtraj_nc_roundtrip',
+    }
+    if md is None:
+        details['error'] = MDTRAJ_IMPORT_ERROR or 'mdtraj import failed'
+        return {
+            'mode': 'capability',
+            'capability': 'binary_trajectory_bridge',
+            'sourceFormat': 'nc',
+            'ok': False,
+            'status': 'blocked',
+            'details': details,
+        }
+
+    try:
+        import numpy as np  # type: ignore
+        details['numpyImportOk'] = True
+    except Exception as err:  # noqa: BLE001
+        details['numpyImportOk'] = False
+        details['error'] = f'numpy import failed: {err}'
+        return {
+            'mode': 'capability',
+            'capability': 'binary_trajectory_bridge',
+            'sourceFormat': 'nc',
+            'ok': False,
+            'status': 'blocked',
+            'details': details,
+        }
+
+    tmp_nc_path: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp_nc:
+            tmp_nc_path = tmp_nc.name
+
+        topology = md.Topology()
+        chain = topology.add_chain()
+        residue = topology.add_residue('DUM', chain)
+        topology.add_atom('C', md.element.carbon, residue)
+        traj = md.Trajectory(np.zeros((1, 1, 3), dtype=np.float32), topology)
+        traj.save_netcdf(tmp_nc_path)
+
+        with md.open(tmp_nc_path) as handle:
+            frame_count = len(handle)
+            xyz = read_xyz_from_handle(handle, n_frames=1, stride=1)
+            xyz = normalize_handle_units_to_nm(xyz, 'nc')
+
+        atom_count = int(xyz.shape[1]) if xyz is not None and xyz.shape and len(xyz.shape) >= 2 else 0
+        details['roundtripFrameCount'] = int(frame_count)
+        details['roundtripAtomCount'] = int(atom_count)
+        return {
+            'mode': 'capability',
+            'capability': 'binary_trajectory_bridge',
+            'sourceFormat': 'nc',
+            'ok': True,
+            'status': 'ok',
+            'details': details,
+        }
+    except Exception as err:  # noqa: BLE001
+        error_text = str(err)
+        details['error'] = error_text
+        lowered = error_text.lower()
+        if "unexpected keyword argument 'format'" in lowered or 'netcdf_file.__init__' in lowered:
+            status = 'blocked'
+            details['classification'] = 'incompatible_scipy_netcdf_backend'
+        else:
+            status = 'degraded'
+            details['classification'] = 'nc_runtime_probe_failed'
+        return {
+            'mode': 'capability',
+            'capability': 'binary_trajectory_bridge',
+            'sourceFormat': 'nc',
+            'ok': False,
+            'status': status,
+            'details': details,
+        }
+    finally:
+        if tmp_nc_path and os.path.exists(tmp_nc_path):
+            try:
+                os.remove(tmp_nc_path)
+            except OSError:
+                pass
 
 
 def normalize_legacy_args(argv: List[str]) -> Dict[str, Any]:
@@ -83,6 +209,7 @@ def normalize_legacy_args(argv: List[str]) -> Dict[str, Any]:
 
 
 def read_metadata(traj_path: str, top_path: str, source_format: str) -> Dict[str, Any]:
+    ensure_mdtraj_available()
     frame_count = 0
     xyz = None
 
@@ -132,6 +259,7 @@ def read_chunk(
     count: Optional[int],
     stride: int,
 ) -> Dict[str, Any]:
+    ensure_mdtraj_available()
     safe_start = max(0, int(start))
     safe_stride = max(1, int(stride))
     requested_count = max(0, int(count if count is not None else 0))
@@ -169,6 +297,7 @@ def read_chunk(
 
 
 def read_full(traj_path: str, top_path: str, source_format: str) -> Dict[str, Any]:
+    ensure_mdtraj_available()
     traj = md.load(traj_path, top=top_path)
     frames = flatten_frames_angstrom(traj.xyz)
     return {
@@ -245,17 +374,26 @@ def build_chunk_payload(
 def main() -> int:
     args = normalize_legacy_args(sys.argv)
 
+    mode = str(args.get('mode') or 'full').lower()
+    source_format = infer_source_format(str(args.get('traj') or ''), args.get('format'))
+
+    if mode == 'capability':
+        try:
+            payload = run_capability_probe(source_format)
+            print(json.dumps(payload))
+            return 0
+        except Exception as err:  # noqa: BLE001
+            print(json.dumps({'error': str(err), 'mode': 'capability'}))
+            return 1
+
     traj_path = args.get('traj')
     top_path = args.get('top')
-    mode = str(args.get('mode') or 'full').lower()
 
     if not traj_path or not top_path:
         print(json.dumps({
             'error': 'Usage: binary_traj_bridge.py <traj_path> <top_path> [format] OR --mode <metadata|chunk|full> --traj <path> --top <path>'
         }))
         return 1
-
-    source_format = infer_source_format(traj_path, args.get('format'))
 
     try:
         if mode == 'metadata':

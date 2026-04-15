@@ -3,7 +3,12 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
-import mdtraj as md
+try:
+    import mdtraj as md
+    MDTRAJ_IMPORT_ERROR: Optional[str] = None
+except Exception as err:  # noqa: BLE001
+    md = None
+    MDTRAJ_IMPORT_ERROR = str(err)
 
 ION_RESIDUES = {
     'NA', 'CL', 'K', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD', 'BR', 'I'
@@ -32,6 +37,11 @@ ELEMENT_BY_ATOM_PREFIX = {
     'CD': 'Cd',
     'SI': 'Si',
 }
+
+
+def ensure_mdtraj_available() -> None:
+    if md is None:
+        raise RuntimeError(f'mdtraj import failed: {MDTRAJ_IMPORT_ERROR or "unknown error"}')
 
 
 def chain_id_from_index(index: int) -> str:
@@ -65,14 +75,34 @@ def guess_element(atom_name: str, residue_name: str) -> str:
     return 'C'
 
 
+def safe_bool_residue_property(residue: Any, property_name: str) -> Optional[bool]:
+    try:
+        value = getattr(residue, property_name)
+    except NotImplementedError:
+        return None
+    except Exception:
+        return None
+
+    if value is None:
+        return None
+    try:
+        return bool(value)
+    except Exception:
+        return None
+
+
 def residue_is_polymer(residue: Any, residue_name_upper: str) -> bool:
     if residue_name_upper in POLYMER_RESIDUES:
         return True
 
-    if bool(getattr(residue, 'is_protein', False)):
+    is_protein = safe_bool_residue_property(residue, 'is_protein')
+    if is_protein:
         return True
-    if bool(getattr(residue, 'is_nucleic', False)):
+
+    is_nucleic = safe_bool_residue_property(residue, 'is_nucleic')
+    if is_nucleic:
         return True
+
     return False
 
 
@@ -120,6 +150,7 @@ def build_residue_components(topology: Any) -> List[List[int]]:
 
 
 def parse_parm7_topology(parm7_path: str) -> Dict[str, Any]:
+    ensure_mdtraj_available()
     top = md.load_prmtop(parm7_path)
     atom_count = int(top.n_atoms)
 
@@ -254,17 +285,76 @@ def parse_parm7_topology(parm7_path: str) -> Dict[str, Any]:
     }
 
 
-def main() -> int:
-    if len(sys.argv) < 2:
-        print(json.dumps({'error': 'Usage: parm7_topology_bridge.py <path_to_parm7>'}))
-        return 1
+def run_capability_probe() -> Dict[str, Any]:
+    ensure_mdtraj_available()
 
-    parm7_path = os.path.abspath(sys.argv[1])
-    if not os.path.exists(parm7_path):
-        print(json.dumps({'error': f'.parm7 file not found: {parm7_path}'}))
-        return 1
+    class _ProbeResidue:
+        @property
+        def is_protein(self):
+            raise NotImplementedError('probe is_protein intentionally unimplemented')
+
+        @property
+        def is_nucleic(self):
+            raise NotImplementedError('probe is_nucleic intentionally unimplemented')
+
+    probe_result = residue_is_polymer(_ProbeResidue(), 'UNK')
+    return {
+        'mode': 'capability',
+        'capability': 'parm7_topology_bridge',
+        'ok': True,
+        'details': {
+            'mdtrajImportOk': True,
+            'notImplementedFallbackSafe': probe_result is False,
+            'supportsPrmtopParsing': hasattr(md, 'load_prmtop'),
+        },
+    }
+
+
+def parse_args(argv: List[str]) -> Dict[str, Any]:
+    args: Dict[str, Any] = {
+        'mode': 'parse',
+        'parm7': None,
+    }
+
+    if len(argv) >= 2 and not argv[1].startswith('--'):
+        args['parm7'] = argv[1]
+        return args
+
+    i = 1
+    while i < len(argv):
+        token = argv[i]
+        if token == '--mode' and i + 1 < len(argv):
+            args['mode'] = str(argv[i + 1]).lower()
+            i += 2
+            continue
+        if token == '--parm7' and i + 1 < len(argv):
+            args['parm7'] = argv[i + 1]
+            i += 2
+            continue
+        i += 1
+
+    return args
+
+
+def main() -> int:
+    args = parse_args(sys.argv)
+    mode = str(args.get('mode') or 'parse').lower()
 
     try:
+        if mode == 'capability':
+            print(json.dumps(run_capability_probe()))
+            return 0
+
+        parm7_path = args.get('parm7')
+        if not parm7_path:
+            print(json.dumps({'error': 'Usage: parm7_topology_bridge.py <path_to_parm7> OR --mode capability'}))
+            return 1
+
+        parm7_path = os.path.abspath(parm7_path)
+        if not os.path.exists(parm7_path):
+            print(json.dumps({'error': f'.parm7 file not found: {parm7_path}'}))
+            return 1
+
         payload = parse_parm7_topology(parm7_path)
         print(json.dumps(payload))
         return 0

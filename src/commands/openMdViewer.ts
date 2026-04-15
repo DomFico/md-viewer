@@ -201,6 +201,19 @@ function buildDependencyErrorGuidance(
     || msg.includes('modulenotfounderror');
   const missingNetcdfPackage = msg.includes('no module named netcdf4') || msg.includes('netcdf4');
   const mpiRelatedIssue = msg.includes('mpi4py') || msg.includes('mpi');
+  const parm7BridgeRuntimeError = context.topologyExt === '.parm7'
+    && (
+      msg.includes('notimplementederror')
+      || msg.includes('is_protein')
+      || msg.includes('is_nucleic')
+      || msg.includes('.parm7 parser bridge failed')
+      || msg.includes('failed to parse .parm7 bridge json')
+    );
+  const ncBackendFormatError = (context.trajectoryExt === '.nc' || context.trajectoryExt === '.rst7')
+    && (
+      msg.includes("unexpected keyword argument 'format'")
+      || msg.includes('netcdf_file.__init__')
+    );
 
   if (missingCorePackage) {
     dependencyIssue = true;
@@ -213,6 +226,16 @@ function buildDependencyErrorGuidance(
     dependencyIssue = true;
     actionableDetails.push('.nc/.rst7 capability is unavailable or degraded on the selected interpreter');
     actionableDetails.push('On HPC, netCDF4 may require cluster MPI/Python modules before import succeeds');
+  }
+  if (parm7BridgeRuntimeError) {
+    dependencyIssue = true;
+    actionableDetails.push('.parm7 topology bridge runtime failed on this interpreter');
+    actionableDetails.push('This is often interpreter/runtime specific on HPC; switch interpreters and rerun diagnostics');
+  }
+  if (ncBackendFormatError) {
+    dependencyIssue = true;
+    actionableDetails.push('.nc runtime bridge is incompatible with this scipy/netcdf backend on the selected interpreter');
+    actionableDetails.push('Select another interpreter/venv and rerun diagnostics before retrying .nc');
   }
   if (msg.includes('no module named') || msg.includes('modulenotfounderror')) {
     dependencyIssue = true;

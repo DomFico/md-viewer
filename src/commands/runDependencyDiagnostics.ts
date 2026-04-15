@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as vscode from 'vscode';
+import { spawnSync } from 'child_process';
 import { bridgeCandidatePaths, RUNTIME_BRIDGE_SCRIPTS, resolveRuntimeBridgePath } from '../runtime/bridgePaths';
 import {
   amberTopologyReady,
@@ -40,6 +41,17 @@ type CandidateEvaluation = {
   missingImports: string[];
 };
 
+type BridgeCapabilityProbeResult = {
+  ok: boolean;
+  status: CapabilityStatus;
+  reason: string;
+  details?: Record<string, unknown>;
+  error?: string;
+  exitCode: number | null;
+  rawOutput: string;
+  rawStderr: string;
+};
+
 type DiagnosticsSummary = {
   configuredPythonInterpreter: string | null;
   lastKnownGoodInterpreter: string | null;
@@ -73,6 +85,10 @@ type DiagnosticsSummary = {
     selectedExists: boolean;
     candidatePaths: string[];
   }>;
+  bridgeCapabilityProbes: {
+    parm7Topology: BridgeCapabilityProbeResult | null;
+    ncRuntime: BridgeCapabilityProbeResult | null;
+  };
   capabilities: {
     matrix: {
       coreRuntime: CapabilityItem;
@@ -118,6 +134,101 @@ function buildBridgeDiagnostics(scriptName: string): {
   };
 }
 
+function parseBridgeJsonOutput(text: string): any {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+      throw new Error('No JSON object found in bridge output.');
+    }
+    return JSON.parse(text.slice(firstBrace, lastBrace + 1));
+  }
+}
+
+function normalizedCapabilityStatus(value: unknown): CapabilityStatus {
+  if (value === 'ok' || value === 'degraded' || value === 'blocked') {
+    return value;
+  }
+  return 'blocked';
+}
+
+function runBridgeCapabilityProbe(input: {
+  pythonExecutable: string;
+  bridgePath: string;
+  args: string[];
+}): BridgeCapabilityProbeResult {
+  const spawnResult = spawnSync(input.pythonExecutable, [input.bridgePath, ...input.args], {
+    encoding: 'utf8',
+    timeout: 20000,
+  });
+
+  const rawOutput = spawnResult.stdout || '';
+  const rawStderr = spawnResult.stderr || '';
+  const exitCode = Number.isInteger(spawnResult.status) ? spawnResult.status : null;
+
+  if (spawnResult.error) {
+    return {
+      ok: false,
+      status: 'blocked',
+      reason: `Failed to run bridge probe: ${spawnResult.error.message}`,
+      error: spawnResult.error.message,
+      exitCode,
+      rawOutput,
+      rawStderr,
+    };
+  }
+
+  if (spawnResult.status !== 0) {
+    const reason = (rawStderr || rawOutput || `Bridge probe exited with code ${spawnResult.status}`).trim();
+    return {
+      ok: false,
+      status: 'blocked',
+      reason,
+      error: reason,
+      exitCode,
+      rawOutput,
+      rawStderr,
+    };
+  }
+
+  try {
+    const parsed = parseBridgeJsonOutput(rawOutput);
+    const ok = Boolean(parsed?.ok);
+    const status = normalizedCapabilityStatus(parsed?.status ?? (ok ? 'ok' : 'blocked'));
+    const details = parsed?.details && typeof parsed.details === 'object' ? parsed.details : {};
+    const reason = typeof parsed?.error === 'string'
+      ? parsed.error
+      : typeof details?.error === 'string'
+        ? String(details.error)
+        : ok
+          ? 'Bridge runtime capability probe succeeded.'
+          : 'Bridge runtime capability probe reported unavailable.';
+    return {
+      ok,
+      status,
+      reason,
+      details,
+      error: typeof parsed?.error === 'string' ? parsed.error : undefined,
+      exitCode,
+      rawOutput,
+      rawStderr,
+    };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      status: 'blocked',
+      reason: `Failed to parse bridge probe output: ${reason}`,
+      error: reason,
+      exitCode,
+      rawOutput,
+      rawStderr,
+    };
+  }
+}
+
 function evaluateCandidate(candidate: InterpreterCandidate): CandidateEvaluation {
   const resolvedPythonPath = resolveExecutablePath(candidate.executable);
   const pythonDiagnostics = runPythonImportDiagnostics(candidate.executable);
@@ -158,13 +269,15 @@ function buildCapabilityMatrix(input: {
   selected: CandidateEvaluation;
   binaryBridgeExists: boolean;
   parm7BridgeExists: boolean;
+  parm7BridgeProbe: BridgeCapabilityProbeResult | null;
+  ncBridgeProbe: BridgeCapabilityProbeResult | null;
 }): {
   coreRuntime: CapabilityItem;
   amberTopology: CapabilityItem;
   netcdfTrajectories: CapabilityItem;
   bridgeScripts: CapabilityItem;
 } {
-  const { selected, binaryBridgeExists, parm7BridgeExists } = input;
+  const { selected, binaryBridgeExists, parm7BridgeExists, parm7BridgeProbe, ncBridgeProbe } = input;
 
   const bridgeScripts = (binaryBridgeExists && parm7BridgeExists)
     ? capabilityOk(['Runtime bridge scripts are present.'])
@@ -181,26 +294,60 @@ function buildCapabilityMatrix(input: {
       missingCore.length > 0 ? `Missing core packages: ${missingCore.join(', ')}` : '',
     ].filter((reason) => reason.length > 0));
 
-  const amberTopology = (!parm7BridgeExists)
-    ? capabilityBlocked([`Missing ${RUNTIME_BRIDGE_SCRIPTS.parm7Topology}`])
-    : selected.amberReady
-      ? capabilityOk(['mdtraj import succeeded for .parm7 topology parsing.'])
+  let amberTopology: CapabilityItem;
+  if (!parm7BridgeExists) {
+    amberTopology = capabilityBlocked([`Missing ${RUNTIME_BRIDGE_SCRIPTS.parm7Topology}`]);
+  } else if (!selected.coreReady) {
+    amberTopology = capabilityBlocked([
+      'Core runtime is blocked (mdtraj/numpy/scipy required before .parm7 can run).',
+    ]);
+  } else if (parm7BridgeProbe?.ok) {
+    amberTopology = capabilityOk([
+      '.parm7 topology bridge runtime probe succeeded.',
+    ]);
+  } else if (parm7BridgeProbe) {
+    amberTopology = parm7BridgeProbe.status === 'degraded'
+      ? capabilityDegraded([
+        `.parm7 bridge probe degraded: ${parm7BridgeProbe.reason}`,
+      ])
+      : capabilityBlocked([
+        `.parm7 bridge probe failed: ${parm7BridgeProbe.reason}`,
+      ]);
+  } else {
+    amberTopology = selected.amberReady
+      ? capabilityDegraded(['.parm7 bridge probe was unavailable; mdtraj import passed but runtime path is unverified.'])
       : capabilityBlocked([
         selected.diagnosticsError ? `Python diagnostics error: ${selected.diagnosticsError}` : '',
         selected.pythonImports?.mdtraj?.ok === false ? `mdtraj import failed: ${selected.pythonImports.mdtraj.error || 'unknown error'}` : '',
       ].filter((reason) => reason.length > 0));
+  }
 
   let netcdfTrajectories: CapabilityItem;
   if (!binaryBridgeExists) {
     netcdfTrajectories = capabilityBlocked([`Missing ${RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory}`]);
   } else if (!selected.coreReady) {
     netcdfTrajectories = capabilityBlocked(['Core runtime is blocked (mdtraj/numpy/scipy required before .nc can run).']);
-  } else if (selected.netcdfImportReady) {
-    netcdfTrajectories = capabilityOk(['netCDF4 import succeeded on selected interpreter.']);
+  } else if (ncBridgeProbe?.ok) {
+    netcdfTrajectories = capabilityOk([
+      '.nc bridge runtime probe succeeded.',
+      selected.netcdfImportReady
+        ? 'netCDF4 import succeeded.'
+        : 'netCDF4 import failed, but the actual .nc bridge runtime path passed on this interpreter.',
+    ]);
+  } else if (ncBridgeProbe) {
+    netcdfTrajectories = ncBridgeProbe.status === 'degraded'
+      ? capabilityDegraded([
+        `.nc bridge runtime probe degraded: ${ncBridgeProbe.reason}`,
+      ])
+      : capabilityBlocked([
+        `.nc bridge runtime probe failed: ${ncBridgeProbe.reason}`,
+      ]);
   } else {
     netcdfTrajectories = capabilityDegraded([
-      'netCDF4 import failed on selected interpreter.',
-      'Some HPC environments can still open .nc depending on mdtraj build/runtime modules, but behavior is host-dependent.',
+      '.nc bridge runtime probe was unavailable; status inferred from imports only.',
+      selected.netcdfImportReady
+        ? 'netCDF4 import succeeded, but runtime path remains unverified.'
+        : 'netCDF4 import failed and runtime path is unverified.',
     ]);
   }
 
@@ -301,10 +448,35 @@ export async function runDependencyDiagnostics(context: vscode.ExtensionContext)
   const binaryBridge = buildBridgeDiagnostics(RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory);
   const parm7Bridge = buildBridgeDiagnostics(RUNTIME_BRIDGE_SCRIPTS.parm7Topology);
 
+  const parm7BridgeProbe = parm7Bridge.selectedExists
+    ? runBridgeCapabilityProbe({
+      pythonExecutable: selectedEval.candidate.executable,
+      bridgePath: parm7Bridge.selectedPath,
+      args: ['--mode', 'capability'],
+    })
+    : null;
+
+  const ncBridgeProbe = binaryBridge.selectedExists
+    ? runBridgeCapabilityProbe({
+      pythonExecutable: selectedEval.candidate.executable,
+      bridgePath: binaryBridge.selectedPath,
+      args: ['--mode', 'capability', '--format', 'nc'],
+    })
+    : null;
+
+  emitCheckpoint('CHK_DEP_10_BRIDGE_CAPABILITY_PROBES', {
+    selectedPythonExecutable: selectedEval.candidate.executable,
+    extensionHost: hostInfo,
+    parm7BridgeProbe,
+    ncBridgeProbe,
+  });
+
   const capabilityMatrix = buildCapabilityMatrix({
     selected: selectedEval,
     binaryBridgeExists: binaryBridge.selectedExists,
     parm7BridgeExists: parm7Bridge.selectedExists,
+    parm7BridgeProbe,
+    ncBridgeProbe,
   });
   const capabilitySummary = summarizeCapabilityMatrix(capabilityMatrix);
 
@@ -369,6 +541,10 @@ export async function runDependencyDiagnostics(context: vscode.ExtensionContext)
       [RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory]: binaryBridge,
       [RUNTIME_BRIDGE_SCRIPTS.parm7Topology]: parm7Bridge,
     },
+    bridgeCapabilityProbes: {
+      parm7Topology: parm7BridgeProbe,
+      ncRuntime: ncBridgeProbe,
+    },
     capabilities: {
       matrix: capabilityMatrix,
       summary: capabilitySummary,
@@ -395,12 +571,14 @@ export async function runDependencyDiagnostics(context: vscode.ExtensionContext)
     capabilityMatrix.amberTopology,
     capabilityMatrix.bridgeScripts,
   ].some((capability) => capability.status === 'blocked');
+  const netcdfBlocked = capabilityMatrix.netcdfTrajectories.status === 'blocked';
 
-  if (hasBlockingIssue) {
+  if (hasBlockingIssue || netcdfBlocked) {
     const blockingLines = [
       ...capabilityMatrix.coreRuntime.reasons,
       ...capabilityMatrix.amberTopology.reasons,
       ...capabilityMatrix.bridgeScripts.reasons,
+      ...(netcdfBlocked ? capabilityMatrix.netcdfTrajectories.reasons : []),
     ];
 
     emitCheckpoint('CHK_DEP_3_DIAGNOSTICS_RESULT', {
