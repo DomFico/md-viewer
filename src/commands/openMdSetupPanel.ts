@@ -23,11 +23,11 @@ import { openMdViewer } from './openMdViewer';
 import { RUNTIME_BRIDGE_SCRIPTS, resolveRuntimeBridgePath } from '../runtime/bridgePaths';
 import { preferredPythonExecutable } from '../runtime/pythonRuntime';
 
-const DATASET_FILE_FILTERS = ['xyz', 'xtc', 'trr', 'dcd', 'nc', 'rst7', 'pdb', 'gro', 'parm7'];
-const SUPPORTED_TRAJECTORY_PARSE_EXTS = new Set(['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.pdb']);
-const SUPPORTED_TOPOLOGY_PARSE_EXTS = new Set(['.pdb', '.gro', '.parm7']);
-const BINARY_METADATA_EXTS = new Set(['.xtc', '.trr', '.dcd', '.nc', '.rst7']);
-const TRAJECTORY_REQUIRES_TOPOLOGY_EXTS = new Set(['.xtc', '.trr', '.dcd', '.nc', '.rst7']);
+const DATASET_FILE_FILTERS = ['xyz', 'xtc', 'trr', 'dcd', 'nc', 'rst7', 'inpcrd', 'mdcrd', 'pdb', 'gro', 'parm7', 'prmtop'];
+const SUPPORTED_TRAJECTORY_PARSE_EXTS = new Set(['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd', '.pdb']);
+const SUPPORTED_TOPOLOGY_PARSE_EXTS = new Set(['.pdb', '.gro', '.parm7', '.prmtop']);
+const BINARY_METADATA_EXTS = new Set(['.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd']);
+const TRAJECTORY_REQUIRES_TOPOLOGY_EXTS = new Set(['.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd']);
 
 interface SetupPanelCandidate {
   label: string;
@@ -357,7 +357,7 @@ async function buildValidation(
     if (TRAJECTORY_REQUIRES_TOPOLOGY_EXTS.has(trajectoryExt)) {
       messages.push({
         level: 'error',
-        message: `Trajectory format ${trajectoryExt} requires a companion topology (recommended: .parm7/.pdb/.gro depending on source).`,
+        message: `Trajectory format ${trajectoryExt} requires a companion topology (recommended: .parm7/.prmtop/.pdb/.gro depending on source).`,
       });
       blocking = true;
     } else {
@@ -769,7 +769,7 @@ export async function openMdDatasetSetupPanel(
     if (message.type === 'setupPanelBrowseTopology') {
       const picked = await vscode.window.showOpenDialog({
         canSelectMany: false,
-        filters: { 'Topology files': ['pdb', 'gro', 'parm7'] },
+        filters: { 'Topology files': ['pdb', 'gro', 'parm7', 'prmtop'] },
         title: 'Select topology file',
       });
       if (!picked || picked.length === 0) return;

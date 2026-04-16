@@ -7,12 +7,12 @@ import {
   ClassificationBucket 
 } from '../types/NormalizedDataset';
 
-const ION_RESIDUES = new Set(['NA', 'CL', 'K', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD', 'BR', 'I']);
+const ION_RESIDUES = new Set(['NA', 'NA+', 'CL', 'CL-', 'K', 'K+', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD', 'BR', 'I']);
 const SOLVENT_RESIDUES = new Set(['HOH', 'WAT', 'SOL', 'TIP3P', 'TIP4P', 'SPC', 'SPCE']);
 const POLYMER_RESIDUES = new Set([
   'ALA','ARG','ASN','ASP','CYS','GLN','GLU','GLY','HIS','ILE','LEU','LYS','MET','PHE','PRO','SER','THR','TRP','TYR','VAL',
   'ASH','AS4','GLH','GL4','CYM','CYX','LYN','HIP','HID','HIE',
-  'A','C','G','T','U','DA','DC','DG','DT'
+  'A','C','G','T','U','DA','DC','DG','DT','RA','RC','RG','RU'
 ]);
 const COMMON_SOLVENT_RESIDUE_COUNT_THRESHOLD = 50;
 

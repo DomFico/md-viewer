@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { DatasetResolver, ResolveDatasetOptions } from '../parsing/DatasetResolver';
 import { ITrajectoryParser, ITopologyParser, TrajectoryData } from '../parsing/IParser';
 import { XyzParser } from '../parsing/xyz';
-import { XtcParser, DcdParser, TrrParser, NcParser, Rst7Parser, BinaryTrajectoryFormat } from '../parsing/xtc';
+import { XtcParser, DcdParser, TrrParser, NcParser, Rst7Parser, InpcrdParser, MdcrdParser, BinaryTrajectoryFormat } from '../parsing/xtc';
 import { PdbParser } from '../parsing/pdb';
 import { GroParser } from '../parsing/gro';
 import { Parm7Parser } from '../parsing/parm7';
@@ -32,6 +32,8 @@ const trajectoryParsers: ITrajectoryParser[] = [
   new TrrParser(),
   new NcParser(),
   new Rst7Parser(),
+  new InpcrdParser(),
+  new MdcrdParser(),
 ];
 
 const topologyParsers: ITopologyParser[] = [
@@ -46,9 +48,11 @@ const BINARY_TRAJECTORY_EXT_TO_FORMAT: Record<string, BinaryTrajectoryFormat> = 
   '.trr': 'trr',
   '.nc': 'nc',
   '.rst7': 'rst7',
+  '.inpcrd': 'rst7',
+  '.mdcrd': 'mdcrd',
 };
-const AMBER_TRAJECTORY_EXTS = new Set(['.nc', '.rst7']);
-const AMBER_TOPOLOGY_EXTS = new Set(['.parm7']);
+const AMBER_TRAJECTORY_EXTS = new Set(['.nc', '.rst7', '.inpcrd', '.mdcrd']);
+const AMBER_TOPOLOGY_EXTS = new Set(['.parm7', '.prmtop']);
 
 type BinaryFlowCheckpointPhase =
   | 'commandFired'
@@ -111,6 +115,16 @@ const BINARY_FLOW_CHECKPOINTS: Record<BinaryTrajectoryFormat, Record<BinaryFlowC
     payloadBuilt: 'CHK_RST7_10_PAYLOAD_BUILT',
     webviewPostmessage: 'CHK_RST7_11_WEBVIEW_POSTMESSAGE',
   },
+  mdcrd: {
+    commandFired: 'CHK_MDCRD_1_COMMAND_FIRED',
+    resolverStart: 'CHK_MDCRD_2_RESOLVER_START',
+    resolverResult: 'CHK_MDCRD_3_RESOLVER_RESULT',
+    parserSelected: 'CHK_MDCRD_4_TRAJECTORY_PARSER_SELECTED',
+    topologyParsed: 'CHK_MDCRD_8_TOPOLOGY_PARSED',
+    normalizationDone: 'CHK_MDCRD_9_NORMALIZATION_DONE',
+    payloadBuilt: 'CHK_MDCRD_10_PAYLOAD_BUILT',
+    webviewPostmessage: 'CHK_MDCRD_11_WEBVIEW_POSTMESSAGE',
+  },
 };
 
 const STREAM_CHECKPOINT_PREFIX: Record<BinaryTrajectoryFormat, string> = {
@@ -119,6 +133,7 @@ const STREAM_CHECKPOINT_PREFIX: Record<BinaryTrajectoryFormat, string> = {
   trr: 'CHK_STREAM_TRR',
   nc: 'CHK_STREAM_NC',
   rst7: 'CHK_STREAM_RST7',
+  mdcrd: 'CHK_STREAM_MDCRD',
 };
 
 type StreamCheckpointStep = 3 | 4 | 5 | 6;
@@ -163,6 +178,28 @@ function arrayLengthOrNull(value: unknown): number | null {
 
 function sampleArray(value: unknown, maxItems = 6): unknown[] {
   return Array.isArray(value) ? value.slice(0, maxItems) : [];
+}
+
+const NUCLEIC_RESIDUE_NAMES = new Set(['A', 'C', 'G', 'T', 'U', 'DA', 'DC', 'DG', 'DT', 'RA', 'RC', 'RG', 'RU']);
+
+function summarizeNucleicTrace(topology: any): Record<string, unknown> {
+  const residues = Array.isArray(topology?.residueEntries) ? topology.residueEntries : [];
+  const nucleicResidues = residues
+    .map((residue: any, id: number) => ({ id, residue }))
+    .filter((entry: any) => NUCLEIC_RESIDUE_NAMES.has(String(entry.residue?.resName ?? '').toUpperCase()));
+  return {
+    nucleicResidueCount: nucleicResidues.length,
+    nucleicResidueSample: nucleicResidues.slice(0, 8).map((entry: any) => ({
+      id: entry.id,
+      chainId: entry.residue?.chainId ?? '',
+      chainIndex: entry.residue?.chainIndex ?? null,
+      resName: entry.residue?.resName ?? '',
+      resSeq: entry.residue?.resSeq ?? null,
+      atomCount: Array.isArray(entry.residue?.atomIndices) ? entry.residue.atomIndices.length : null,
+    })),
+    traceAnchorCount: arrayLengthOrNull(topology?.caIndices) ?? 0,
+    traceLinePairCount: Math.floor((arrayLengthOrNull(topology?.caLinePairs) ?? 0) / 2),
+  };
 }
 
 function parseEnvInt(name: string, fallback: number): number {
@@ -211,7 +248,8 @@ function buildDependencyErrorGuidance(
     || msg.includes('modulenotfounderror');
   const missingNetcdfPackage = msg.includes('no module named netcdf4') || msg.includes('netcdf4');
   const mpiRelatedIssue = msg.includes('mpi4py') || msg.includes('mpi');
-  const parm7BridgeRuntimeError = context.topologyExt === '.parm7'
+  const isAmberTopology = context.topologyExt === '.parm7' || context.topologyExt === '.prmtop';
+  const parm7BridgeRuntimeError = isAmberTopology
     && (
       msg.includes('notimplementederror')
       || msg.includes('is_protein')
@@ -228,8 +266,8 @@ function buildDependencyErrorGuidance(
   if (missingCorePackage) {
     dependencyIssue = true;
     actionableDetails.push('Core runtime packages are required: mdtraj, numpy, scipy');
-    if (context.topologyExt === '.parm7') {
-      actionableDetails.push('.parm7 topology support is blocked until mdtraj imports successfully');
+    if (isAmberTopology) {
+      actionableDetails.push('.parm7/.prmtop topology support is blocked until mdtraj imports successfully');
     }
   }
   if ((context.trajectoryExt === '.nc' || context.trajectoryExt === '.rst7') && (missingNetcdfPackage || mpiRelatedIssue)) {
@@ -239,7 +277,7 @@ function buildDependencyErrorGuidance(
   }
   if (parm7BridgeRuntimeError) {
     dependencyIssue = true;
-    actionableDetails.push('.parm7 topology bridge runtime failed on this interpreter');
+    actionableDetails.push('.parm7/.prmtop topology bridge runtime failed on this interpreter');
     actionableDetails.push('This is often interpreter/runtime specific on HPC; switch interpreters and rerun diagnostics');
   }
   if (ncBackendFormatError) {
@@ -326,6 +364,7 @@ function summarizeTopology(topology: any): Record<string, unknown> {
     ligandIndicesLength: arrayLengthOrNull(topology?.ligandIndices),
     ionIndicesLength: arrayLengthOrNull(topology?.ionIndices),
     ligandIonIndicesLength: arrayLengthOrNull(topology?.ligandIonIndices),
+    ...summarizeNucleicTrace(topology),
     residueEntriesSample: sampleArray(topology?.residueEntries),
   };
 }
@@ -351,6 +390,7 @@ function summarizeInitPayload(initPayload: any): Record<string, unknown> {
     topology_bondPairs_length: arrayLengthOrNull(top?.bondPairs),
     topology_backbonePairs_field: top && Object.prototype.hasOwnProperty.call(top, 'backbonePairs') ? 'backbonePairs' : 'caLinePairs',
     topology_backbonePairs_length: arrayLengthOrNull(top?.backbonePairs ?? top?.caLinePairs),
+    topology_nucleic_trace: summarizeNucleicTrace(top),
     topology_ligandIndices_present: top ? Object.prototype.hasOwnProperty.call(top, 'ligandIndices') : false,
     topology_ligandIndices_length: arrayLengthOrNull(top?.ligandIndices),
     topology_ionIndices_present: top ? Object.prototype.hasOwnProperty.call(top, 'ionIndices') : false,
@@ -507,6 +547,7 @@ function buildReferencePayloadCapture(initPayload: any, context: {
     hasLigandIonAtomIndices: ligandIonIndices.length > 0,
     hasCommonSolventClass: commonSolventResidueNames.length > 0,
   };
+  const nucleicTrace = summarizeNucleicTrace(top);
 
   return {
     referenceCaseId: context.caseId,
@@ -529,6 +570,7 @@ function buildReferencePayloadCapture(initPayload: any, context: {
     atomToChainLength: atomToChain.length,
     caIndicesLength: caIndices.length,
     caLinePairsLength: caLinePairs.length,
+    nucleicTrace,
     ligandResidueCount: ligandResidues.length,
     ligandResidues,
     ionResidueCount: ionResidues.length,
@@ -555,9 +597,9 @@ type DatasetQuickPickItem = vscode.QuickPickItem & {
   solventHandling?: SolventHandling;
 };
 
-const TRAJECTORY_FILE_EXTS = ['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.pdb'];
-const TOPOLOGY_FILE_EXTS = ['.pdb', '.gro', '.parm7'];
-const DATASET_FILE_FILTERS = ['xyz', 'xtc', 'trr', 'dcd', 'nc', 'rst7', 'pdb', 'gro', 'parm7'];
+const TRAJECTORY_FILE_EXTS = ['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd', '.pdb'];
+const TOPOLOGY_FILE_EXTS = ['.pdb', '.gro', '.parm7', '.prmtop'];
+const DATASET_FILE_FILTERS = ['xyz', 'xtc', 'trr', 'dcd', 'nc', 'rst7', 'inpcrd', 'mdcrd', 'pdb', 'gro', 'parm7', 'prmtop'];
 
 function resolveUriFromCommandInput(input: vscode.Uri | OptionsCommandInput | string | undefined): vscode.Uri | undefined {
   if (!input) return undefined;
@@ -1075,7 +1117,7 @@ export async function openMdViewer(
       if (dataset.topologyPath) {
         const extTopology = path.extname(dataset.topologyPath).toLowerCase();
         const topParser = topologyParsers.find(p => p.canParse(extTopology));
-        if (extTopology === '.parm7') {
+        if (AMBER_TOPOLOGY_EXTS.has(extTopology)) {
           emitCheckpoint('CHK_AMBER_2_PARM7_PARSER_SELECTED', {
             topologyPath: dataset.topologyPath,
             topologyExt: extTopology,
@@ -1090,6 +1132,17 @@ export async function openMdViewer(
             topology = await topParser.parse(dataset.topologyPath);
             hasTopology = topology.hasTopology;
             logDebug('openMdViewer', `Topology parsed successfully`, { hasTopology });
+            const nucleicTraceSummary = summarizeNucleicTrace(topology);
+            if (Number(nucleicTraceSummary.nucleicResidueCount ?? 0) > 0) {
+              emitCheckpoint('CHK_DNA_TRACE_1_TOPOLOGY_TRACE_READY', {
+                trajectoryPath: dataset.trajectoryPath,
+                topologyPath: dataset.topologyPath,
+                trajectoryExt: extTrajectory,
+                topologyExt: extTopology,
+                parserName: topParser.constructor.name,
+                ...nucleicTraceSummary,
+              });
+            }
             emitBinaryCheckpoint(binaryFlowFormat, 'topologyParsed', {
               topologyPath: dataset.topologyPath,
               topologyExt: extTopology,
@@ -1184,7 +1237,7 @@ export async function openMdViewer(
               parseOutcome: 'noParserMatched',
             });
           }
-          if (extTopology === '.parm7') {
+          if (AMBER_TOPOLOGY_EXTS.has(extTopology)) {
             emitCheckpoint('CHK_AMBER_2_PARM7_PARSER_SELECTED', {
               topologyPath: dataset.topologyPath,
               topologyExt: extTopology,
@@ -1312,6 +1365,16 @@ export async function openMdViewer(
         emitStreamCheckpoint(binaryFlowFormat, 3, 'INITIAL_FRAME_READY', streamPayload);
       }
       const payloadSummary = summarizeInitPayload(initPayload);
+      const payloadNucleicTrace = summarizeNucleicTrace(initPayload?.data?.topology);
+      if (Number(payloadNucleicTrace.nucleicResidueCount ?? 0) > 0) {
+        emitCheckpoint('CHK_DNA_TRACE_2_PAYLOAD_TRACE_READY', {
+          trajectoryPath: dataset.trajectoryPath,
+          topologyPath: dataset.topologyPath ?? null,
+          trajectoryExt,
+          topologyExt: topologyExt || null,
+          ...payloadNucleicTrace,
+        });
+      }
       const filterClassVisibility = summarizeFilterClassVisibility(initPayload);
       const samplingFrameStride = Math.max(
         1,

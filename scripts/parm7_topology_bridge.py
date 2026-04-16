@@ -11,7 +11,7 @@ except Exception as err:  # noqa: BLE001
     MDTRAJ_IMPORT_ERROR = str(err)
 
 ION_RESIDUES = {
-    'NA', 'CL', 'K', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD', 'BR', 'I'
+    'NA', 'NA+', 'CL', 'CL-', 'K', 'K+', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD', 'BR', 'I'
 }
 SOLVENT_RESIDUES = {
     'HOH', 'WAT', 'SOL', 'TIP3P', 'TIP4P', 'SPC', 'SPCE'
@@ -20,6 +20,9 @@ POLYMER_RESIDUES = {
     'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE',
     'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL',
     'ASH', 'AS4', 'GLH', 'GL4', 'CYM', 'CYX', 'LYN', 'HIP', 'HID', 'HIE',
+    'A', 'C', 'G', 'T', 'U', 'DA', 'DC', 'DG', 'DT', 'RA', 'RC', 'RG', 'RU'
+}
+NUCLEIC_RESIDUES = {
     'A', 'C', 'G', 'T', 'U', 'DA', 'DC', 'DG', 'DT', 'RA', 'RC', 'RG', 'RU'
 }
 ELEMENT_BY_ATOM_PREFIX = {
@@ -104,6 +107,35 @@ def residue_is_polymer(residue: Any, residue_name_upper: str) -> bool:
         return True
 
     return False
+
+
+def normalize_atom_name_for_trace(atom_name: str) -> str:
+    return atom_name.strip().upper().replace('*', "'")
+
+
+def trace_anchor_priority(atom_name: str, residue_name_upper: str, is_polymer: bool) -> int:
+    if not is_polymer:
+        return 0
+
+    normalized = normalize_atom_name_for_trace(atom_name)
+    if residue_name_upper in NUCLEIC_RESIDUES:
+        if normalized == 'P':
+            return 100
+        if normalized == "C4'":
+            return 90
+        if normalized == "C3'":
+            return 85
+        if normalized == "O3'":
+            return 80
+        if normalized == "C5'":
+            return 75
+        if normalized == "O5'":
+            return 70
+        if normalized == "C1'":
+            return 60
+        return 0
+
+    return 100 if normalized == 'CA' else 0
 
 
 def residue_seq_number(residue: Any) -> int:
@@ -201,6 +233,7 @@ def parse_parm7_topology(parm7_path: str) -> Dict[str, Any]:
 
         residue_id = len(residue_entries)
         atom_indices: List[int] = []
+        best_trace_anchor: Optional[Dict[str, int]] = None
 
         for atom in residue.atoms:
             atom_index = int(atom.index)
@@ -225,10 +258,15 @@ def parse_parm7_topology(parm7_path: str) -> Dict[str, Any]:
                 ligand_indices.append(atom_index)
                 ligand_ion_indices.append(atom_index)
 
-            if atom_name.upper() == 'CA' and is_polymer:
-                ca_indices.append(atom_index)
-                chain_list = ca_by_chain.setdefault(chain_index, [])
-                chain_list.append({'index': atom_index, 'resSeq': res_seq})
+            anchor_priority = trace_anchor_priority(atom_name, residue_name_upper, is_polymer)
+            if anchor_priority > 0 and (
+                best_trace_anchor is None or anchor_priority > int(best_trace_anchor['priority'])
+            ):
+                best_trace_anchor = {
+                    'index': atom_index,
+                    'resSeq': res_seq,
+                    'priority': anchor_priority,
+                }
 
         residue_entries.append({
             'chainId': chain_id,
@@ -242,6 +280,14 @@ def parse_parm7_topology(parm7_path: str) -> Dict[str, Any]:
             'isPolymer': is_polymer,
             'isSolvent': is_solvent,
         })
+
+        if best_trace_anchor is not None:
+            ca_indices.append(int(best_trace_anchor['index']))
+            chain_list = ca_by_chain.setdefault(chain_index, [])
+            chain_list.append({
+                'index': int(best_trace_anchor['index']),
+                'resSeq': int(best_trace_anchor['resSeq']),
+            })
 
     for bond in top.bonds:
         atom_a = int(bond.atom1.index)

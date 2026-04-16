@@ -7,7 +7,7 @@ import { preferredPythonExecutable } from '../runtime/pythonRuntime';
 
 export class Parm7Parser implements ITopologyParser {
   canParse(ext: string): boolean {
-    return ext === '.parm7';
+    return ext === '.parm7' || ext === '.prmtop';
   }
 
   async parse(filePath: string): Promise<TopologyMetadata> {

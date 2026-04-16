@@ -1304,7 +1304,7 @@
           ionResidueIds.push(i);
         } else if (residue.isLigand) {
           ligandResidueIds.push(i);
-        } else {
+        } else if (!residue.isSolvent && !residue.isCommonSolvent) {
           polymerResidueIds.push(i);
         }
       }

@@ -7,7 +7,7 @@ import {
   TrajectoryFrameChunk,
 } from './TrajectoryProvider';
 
-export type BridgeTrajectoryFormat = 'xtc' | 'dcd' | 'trr' | 'nc' | 'rst7';
+export type BridgeTrajectoryFormat = 'xtc' | 'dcd' | 'trr' | 'nc' | 'rst7' | 'mdcrd';
 
 type BridgeMode = 'metadata' | 'chunk' | 'full';
 

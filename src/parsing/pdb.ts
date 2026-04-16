@@ -49,9 +49,43 @@ export interface TopologyMetadata {
 }
 
 const ION_RESIDUES = new Set([
-  'NA', 'CL', 'K', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD'
+  'NA', 'NA+', 'CL', 'CL-', 'K', 'K+', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD'
 ]);
 const SOLVENT_RESIDUES = new Set(['HOH', 'WAT', 'SOL', 'TIP3P', 'TIP4P', 'SPC', 'SPCE']);
+const NUCLEIC_RESIDUES = new Set(['A', 'C', 'G', 'T', 'U', 'DA', 'DC', 'DG', 'DT', 'RA', 'RC', 'RG', 'RU']);
+const POLYMER_RESIDUES = new Set([
+  'ALA','ARG','ASN','ASP','CYS','GLN','GLU','GLY','HIS','ILE','LEU','LYS','MET','PHE','PRO','SER','THR','TRP','TYR','VAL',
+  'ASH','AS4','GLH','GL4','CYM','CYX','LYN','HIP','HID','HIE',
+  ...NUCLEIC_RESIDUES,
+]);
+
+type TraceAnchor = {
+  index: number;
+  resSeq: number;
+  priority: number;
+};
+
+function normalizeAtomNameForTrace(atomName: string): string {
+  return atomName.trim().toUpperCase().replace(/\*/g, "'");
+}
+
+function traceAnchorPriority(atomName: string, resNameUpper: string, isPolymer: boolean): number {
+  if (!isPolymer) return 0;
+
+  const normalized = normalizeAtomNameForTrace(atomName);
+  if (NUCLEIC_RESIDUES.has(resNameUpper)) {
+    if (normalized === 'P') return 100;
+    if (normalized === "C4'") return 90;
+    if (normalized === "C3'") return 85;
+    if (normalized === "O3'") return 80;
+    if (normalized === "C5'") return 75;
+    if (normalized === "O5'") return 70;
+    if (normalized === "C1'") return 60;
+    return 0;
+  }
+
+  return normalized === 'CA' ? 100 : 0;
+}
 
 export function parsePdbTopology(raw: string): TopologyMetadata {
   const caIndices: number[] = [];
@@ -65,9 +99,10 @@ export function parsePdbTopology(raw: string): TopologyMetadata {
   const atomNames: string[] = [];
   const elements: string[] = [];
   
-  // Track CA per chain for building lines
-  // key: chainId (or empty string for no chain), value: list of { index, resSeq }
-  const caByChain = new Map<string, Array<{ index: number, resSeq: number }>>();
+  // Trace anchors are protein CA atoms plus nucleic-acid backbone/sugar anchors.
+  // The field remains named caLinePairs for payload compatibility.
+  const traceByChain = new Map<string, Array<{ index: number, resSeq: number }>>();
+  const traceAnchorByResidue = new Map<number, TraceAnchor>();
   
   // Track continuous residues
   const resKeyMap = new Map<string, number>();
@@ -117,16 +152,8 @@ export function parsePdbTopology(raw: string): TopologyMetadata {
       const resNameUpper = resName.toUpperCase();
       const isIon = ION_RESIDUES.has(resNameUpper);
       const isSolvent = SOLVENT_RESIDUES.has(resNameUpper);
-      const isLigand = isHetatm && resName !== 'HOH' && !isIon;
-      const isPolymer = !isHetatm && !isIon;
-
-      if (atomName === 'CA' && !isHetatm) {
-        caIndices.push(atomIndex);
-        if (!caByChain.has(chainKey)) {
-          caByChain.set(chainKey, []);
-        }
-        caByChain.get(chainKey)!.push({ index: atomIndex, resSeq });
-      }
+      const isPolymer = !isIon && !isSolvent && POLYMER_RESIDUES.has(resNameUpper);
+      const isLigand = !isIon && !isSolvent && !isPolymer;
 
       if (isIon || isLigand) {
         ligandIonIndices.push(atomIndex);
@@ -172,13 +199,31 @@ export function parsePdbTopology(raw: string): TopologyMetadata {
       residueEntries[resId].atomIndices.push(atomIndex);
       atomToResidue.push(resId);
 
+      const anchorPriority = traceAnchorPriority(atomName, resNameUpper, isPolymer);
+      if (anchorPriority > 0) {
+        const existing = traceAnchorByResidue.get(resId);
+        if (!existing || anchorPriority > existing.priority) {
+          traceAnchorByResidue.set(resId, { index: atomIndex, resSeq, priority: anchorPriority });
+        }
+      }
+
       atomIndex++;
     }
   }
 
-  // Build CA connectivity lines by connecting consecutive CAs within identical chains
+  for (const [resId, anchor] of traceAnchorByResidue.entries()) {
+    caIndices.push(anchor.index);
+    const residue = residueEntries[resId];
+    const chainKey = residue?.chainId || '_';
+    if (!traceByChain.has(chainKey)) {
+      traceByChain.set(chainKey, []);
+    }
+    traceByChain.get(chainKey)!.push({ index: anchor.index, resSeq: anchor.resSeq });
+  }
+
+  // Build polymer trace lines by connecting consecutive anchors within identical chains.
   const caLinePairs: number[] = [];
-  for (const [_, chainCAs] of caByChain.entries()) {
+  for (const [_, chainCAs] of traceByChain.entries()) {
     // Sort by residue sequence number just in case
     chainCAs.sort((a, b) => a.resSeq - b.resSeq);
     

@@ -3,7 +3,7 @@
   "publisher": "DominicFico",
   "displayName": "MD Viewer",
   "description": "General molecular dynamics dataset viewer",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -58,7 +58,7 @@
       "explorer/context": [
         {
           "command": "md-viewer.launch",
-          "when": "resourceExtname =~ /\\.(xyz|xtc|trr|dcd|nc|rst7|pdb|gro|parm7)$/i",
+          "when": "resourceExtname =~ /\\.(xyz|xtc|trr|dcd|nc|rst7|inpcrd|mdcrd|pdb|gro|parm7|prmtop)$/i",
           "group": "navigation"
         }
       ]

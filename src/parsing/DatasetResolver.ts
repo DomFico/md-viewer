@@ -23,22 +23,25 @@ export interface DatasetResolutionInspection {
   topologyCandidates: string[];
 }
 
-export const TRAJECTORY_EXTS = ['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.pdb'];
-export const TOPOLOGY_EXTS = ['.pdb', '.gro', '.parm7'];
+export const TRAJECTORY_EXTS = ['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd', '.pdb'];
+export const TOPOLOGY_EXTS = ['.pdb', '.gro', '.parm7', '.prmtop'];
 
 const TOPOLOGY_PREFERENCE_BY_TRAJECTORY: Record<string, string[]> = {
   '.xtc': ['.gro', '.pdb'],
   '.trr': ['.gro', '.pdb'],
   '.dcd': ['.pdb', '.gro'],
   '.xyz': ['.pdb', '.gro'],
-  '.nc': ['.parm7', '.pdb', '.gro'],
-  '.rst7': ['.parm7', '.pdb', '.gro'],
+  '.nc': ['.parm7', '.prmtop', '.pdb', '.gro'],
+  '.rst7': ['.parm7', '.prmtop', '.pdb', '.gro'],
+  '.inpcrd': ['.prmtop', '.parm7', '.pdb', '.gro'],
+  '.mdcrd': ['.prmtop', '.parm7', '.pdb', '.gro'],
 };
 
 const TRAJECTORY_PREFERENCE_BY_TOPOLOGY: Record<string, string[]> = {
-  '.pdb': ['.xtc', '.trr', '.dcd', '.xyz', '.nc', '.pdb'],
-  '.gro': ['.xtc', '.trr', '.dcd', '.xyz', '.nc', '.pdb'],
-  '.parm7': ['.nc', '.rst7', '.dcd', '.xtc', '.trr', '.xyz'],
+  '.pdb': ['.xtc', '.trr', '.dcd', '.xyz', '.nc', '.mdcrd', '.inpcrd', '.pdb'],
+  '.gro': ['.xtc', '.trr', '.dcd', '.xyz', '.nc', '.mdcrd', '.inpcrd', '.pdb'],
+  '.parm7': ['.nc', '.mdcrd', '.rst7', '.inpcrd', '.dcd', '.xtc', '.trr', '.xyz'],
+  '.prmtop': ['.nc', '.mdcrd', '.rst7', '.inpcrd', '.dcd', '.xtc', '.trr', '.xyz'],
 };
 
 const STAGE_TOKEN_GROUPS = [
@@ -193,7 +196,7 @@ function sortCandidatesByScore(candidates: string[], anchorFile: string, preferr
 }
 
 function chooseByTopologyPreference(candidates: string[], trajectoryExt: string): string | undefined {
-  const preference = TOPOLOGY_PREFERENCE_BY_TRAJECTORY[trajectoryExt] ?? ['.parm7', '.pdb', '.gro'];
+  const preference = TOPOLOGY_PREFERENCE_BY_TRAJECTORY[trajectoryExt] ?? ['.parm7', '.prmtop', '.pdb', '.gro'];
   for (const topExt of preference) {
     const match = candidates.find((candidate) => path.extname(candidate).toLowerCase() === topExt);
     if (match) {
@@ -204,7 +207,7 @@ function chooseByTopologyPreference(candidates: string[], trajectoryExt: string)
 }
 
 function chooseByTrajectoryPreference(candidates: string[], topologyExt: string): string | undefined {
-  const preference = TRAJECTORY_PREFERENCE_BY_TOPOLOGY[topologyExt] ?? ['.nc', '.rst7', '.xtc', '.trr', '.dcd', '.xyz', '.pdb'];
+  const preference = TRAJECTORY_PREFERENCE_BY_TOPOLOGY[topologyExt] ?? ['.nc', '.mdcrd', '.rst7', '.inpcrd', '.xtc', '.trr', '.dcd', '.xyz', '.pdb'];
   for (const trajExt of preference) {
     const match = candidates.find((candidate) => path.extname(candidate).toLowerCase() === trajExt);
     if (match) {
@@ -292,7 +295,7 @@ export class DatasetResolver {
         const preferredTrajectory = choosePreferredCandidate(siblingTrajs, preferredTrajectoryFile, preferredTrajectoryExt);
         const rankedTrajectory = chooseRankedCandidate(siblingTrajs, {
           anchorFile: fileName,
-          preferredExtOrder: TRAJECTORY_PREFERENCE_BY_TOPOLOGY[ext] ?? ['.nc', '.rst7', '.xtc', '.trr', '.dcd', '.xyz', '.pdb'],
+          preferredExtOrder: TRAJECTORY_PREFERENCE_BY_TOPOLOGY[ext] ?? ['.nc', '.mdcrd', '.rst7', '.inpcrd', '.xtc', '.trr', '.dcd', '.xyz', '.pdb'],
         }) ?? chooseByTrajectoryPreference(siblingTrajs, ext);
 
         const recommendedTrajectory = preferredTrajectory ?? rankedTrajectory;
@@ -350,7 +353,7 @@ export class DatasetResolver {
         const preferredTopology = choosePreferredCandidate(siblingTops, preferredTopologyFile, preferredTopologyExt);
         const rankedTopology = chooseRankedCandidate(siblingTops, {
           anchorFile: fileName,
-          preferredExtOrder: TOPOLOGY_PREFERENCE_BY_TRAJECTORY[ext] ?? ['.parm7', '.pdb', '.gro'],
+          preferredExtOrder: TOPOLOGY_PREFERENCE_BY_TRAJECTORY[ext] ?? ['.parm7', '.prmtop', '.pdb', '.gro'],
         }) ?? chooseByTopologyPreference(siblingTops, ext);
 
         if (preferredTopology) {

@@ -3,13 +3,42 @@ import { ITopologyParser } from './IParser';
 import { TopologyMetadata, createEmptyTopology, ResidueMetadata } from './pdb';
 import { guessElementFromAtomName } from './elements';
 
-const ION_RESIDUES = new Set(['NA', 'CL', 'K', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD']);
+const ION_RESIDUES = new Set(['NA', 'NA+', 'CL', 'CL-', 'K', 'K+', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD']);
 const SOLVENT_RESIDUES = new Set(['HOH', 'WAT', 'SOL', 'TIP3P', 'TIP4P']);
 const POLYMER_RESIDUES = new Set([
   'ALA','ARG','ASN','ASP','CYS','GLN','GLU','GLY','HIS','ILE','LEU','LYS','MET','PHE','PRO','SER','THR','TRP','TYR','VAL',
   'ASH','AS4','GLH','GL4','CYM','CYX','LYN','HIP','HID','HIE',
-  'A','C','G','T','U','DA','DC','DG','DT'
+  'A','C','G','T','U','DA','DC','DG','DT','RA','RC','RG','RU'
 ]);
+const NUCLEIC_RESIDUES = new Set(['A', 'C', 'G', 'T', 'U', 'DA', 'DC', 'DG', 'DT', 'RA', 'RC', 'RG', 'RU']);
+
+type TraceAnchor = {
+  index: number;
+  resSeq: number;
+  priority: number;
+};
+
+function normalizeAtomNameForTrace(atomName: string): string {
+  return atomName.trim().toUpperCase().replace(/\*/g, "'");
+}
+
+function traceAnchorPriority(atomName: string, resNameUpper: string, isPolymer: boolean): number {
+  if (!isPolymer) return 0;
+
+  const normalized = normalizeAtomNameForTrace(atomName);
+  if (NUCLEIC_RESIDUES.has(resNameUpper)) {
+    if (normalized === 'P') return 100;
+    if (normalized === "C4'") return 90;
+    if (normalized === "C3'") return 85;
+    if (normalized === "O3'") return 80;
+    if (normalized === "C5'") return 75;
+    if (normalized === "O5'") return 70;
+    if (normalized === "C1'") return 60;
+    return 0;
+  }
+
+  return normalized === 'CA' ? 100 : 0;
+}
 
 function chainIdFromIndex(index: number): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -46,7 +75,8 @@ export class GroParser implements ITopologyParser {
         return top;
     }
 
-    const caByChain = new Map<number, Array<{ index: number; resSeq: number }>>();
+    const traceByChain = new Map<number, Array<{ index: number; resSeq: number }>>();
+    const traceAnchorByResidue = new Map<number, TraceAnchor>();
     let currentResidueId = -1;
     let currentChainIndex = 0;
     let previousResidueSeq: number | null = null;
@@ -130,18 +160,27 @@ export class GroParser implements ITopologyParser {
             top.ligandIonIndices.push(atomIndex);
         }
 
-        if (atomName.toUpperCase() === 'CA' && isPolymer) {
-            top.caIndices.push(atomIndex);
-            if (!caByChain.has(currentChainIndex)) {
-                caByChain.set(currentChainIndex, []);
+        const anchorPriority = traceAnchorPriority(atomName, upperRes, isPolymer);
+        if (anchorPriority > 0) {
+            const existing = traceAnchorByResidue.get(currentResidueId);
+            if (!existing || anchorPriority > existing.priority) {
+                traceAnchorByResidue.set(currentResidueId, { index: atomIndex, resSeq, priority: anchorPriority });
             }
-            caByChain.get(currentChainIndex)!.push({ index: atomIndex, resSeq });
         }
 
         atomIndex++;
     }
 
-    for (const [, chainCAs] of caByChain.entries()) {
+    for (const [residueId, anchor] of traceAnchorByResidue.entries()) {
+        top.caIndices.push(anchor.index);
+        const chainIndex = top.residueEntries[residueId]?.chainIndex ?? 0;
+        if (!traceByChain.has(chainIndex)) {
+            traceByChain.set(chainIndex, []);
+        }
+        traceByChain.get(chainIndex)!.push({ index: anchor.index, resSeq: anchor.resSeq });
+    }
+
+    for (const [, chainCAs] of traceByChain.entries()) {
         chainCAs.sort((a, b) => a.resSeq - b.resSeq);
         for (let i = 0; i < chainCAs.length - 1; i++) {
             top.caLinePairs.push(chainCAs[i].index, chainCAs[i + 1].index);

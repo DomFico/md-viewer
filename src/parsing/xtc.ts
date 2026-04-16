@@ -3,7 +3,7 @@ import { emitCheckpoint } from '../runtimeCheckpoint';
 import { BinaryBridgeTrajectoryProvider } from '../trajectory/BinaryBridgeTrajectoryProvider';
 import { RUNTIME_BRIDGE_SCRIPTS, resolveRuntimeBridgePath } from '../runtime/bridgePaths';
 
-export type BinaryTrajectoryFormat = 'xtc' | 'dcd' | 'trr' | 'nc' | 'rst7';
+export type BinaryTrajectoryFormat = 'xtc' | 'dcd' | 'trr' | 'nc' | 'rst7' | 'mdcrd';
 
 type BinaryParserCheckpoints = {
   launch: string;
@@ -37,6 +37,11 @@ const BINARY_PARSER_CHECKPOINTS: Record<BinaryTrajectoryFormat, BinaryParserChec
     exit: 'CHK_RST7_6_RST7_SUBPROCESS_EXIT',
     parsed: 'CHK_RST7_7_RST7_JSON_PARSED',
   },
+  mdcrd: {
+    launch: 'CHK_MDCRD_5_MDCRD_SUBPROCESS_LAUNCH',
+    exit: 'CHK_MDCRD_6_MDCRD_SUBPROCESS_EXIT',
+    parsed: 'CHK_MDCRD_7_MDCRD_JSON_PARSED',
+  },
 };
 
 const STREAM_CHECKPOINT_PREFIX: Record<BinaryTrajectoryFormat, string> = {
@@ -45,6 +50,7 @@ const STREAM_CHECKPOINT_PREFIX: Record<BinaryTrajectoryFormat, string> = {
   trr: 'CHK_STREAM_TRR',
   nc: 'CHK_STREAM_NC',
   rst7: 'CHK_STREAM_RST7',
+  mdcrd: 'CHK_STREAM_MDCRD',
 };
 
 function emitFormatStreamCheckpoint(
@@ -185,6 +191,30 @@ export class NcParser implements ITrajectoryParser {
 
 export class Rst7Parser implements ITrajectoryParser {
   private readonly delegate = new BinaryBridgeTrajectoryParser('.rst7', 'rst7', 'chunked');
+
+  canParse(ext: string): boolean {
+    return this.delegate.canParse(ext);
+  }
+
+  async parse(filePath: string, topPath?: string): Promise<TrajectoryData> {
+    return this.delegate.parse(filePath, topPath);
+  }
+}
+
+export class InpcrdParser implements ITrajectoryParser {
+  private readonly delegate = new BinaryBridgeTrajectoryParser('.inpcrd', 'rst7', 'chunked');
+
+  canParse(ext: string): boolean {
+    return this.delegate.canParse(ext);
+  }
+
+  async parse(filePath: string, topPath?: string): Promise<TrajectoryData> {
+    return this.delegate.parse(filePath, topPath);
+  }
+}
+
+export class MdcrdParser implements ITrajectoryParser {
+  private readonly delegate = new BinaryBridgeTrajectoryParser('.mdcrd', 'mdcrd', 'chunked');
 
   canParse(ext: string): boolean {
     return this.delegate.canParse(ext);
