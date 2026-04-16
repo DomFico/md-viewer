@@ -11,6 +11,18 @@ export type InterpreterCandidate = {
   detail: string;
 };
 
+export type RejectedInterpreterCandidate = {
+  executable: string;
+  source: InterpreterCandidateSource;
+  detail: string;
+  reason: string;
+};
+
+export type InterpreterCandidateBuildResult = {
+  candidates: InterpreterCandidate[];
+  rejected: RejectedInterpreterCandidate[];
+};
+
 export type PythonImportStatus = {
   ok: boolean;
   error?: string;
@@ -39,9 +51,13 @@ const COMMON_USER_VENV_PYTHONS = [
 ];
 
 export function preferredPythonExecutable(): string {
+  const activeHostKey = (process.env.MD_VIEWER_ACTIVE_HOST_KEY || '').trim() || null;
+  const currentHomeDir = (process.env.MD_VIEWER_ACTIVE_HOME_DIR || '').trim() || null;
+  const selectedInterpreter = preferredSelectedInterpreter(activeHostKey, currentHomeDir);
+  const lastGoodInterpreter = preferredLastKnownInterpreter(activeHostKey, currentHomeDir);
   const candidates = [
-    process.env.MD_VIEWER_PYTHON,
-    process.env.MD_VIEWER_LAST_GOOD_PYTHON,
+    selectedInterpreter,
+    lastGoodInterpreter,
     ...defaultVenvPythonCandidates(),
     process.env.PYTHON,
     process.env.PYTHON3,
@@ -62,12 +78,28 @@ export function preferredPythonExecutable(): string {
 export function buildInterpreterCandidates(input: {
   configuredInterpreter?: string | null;
   lastKnownGoodInterpreter?: string | null;
+  currentHostKey?: string | null;
+  currentHomeDir?: string | null;
+  lastKnownGoodInterpreterHostKey?: string | null;
   workspaceRoots?: string[];
   includeDefaultCommands?: boolean;
 }): InterpreterCandidate[] {
+  return buildInterpreterCandidateSet(input).candidates;
+}
+
+export function buildInterpreterCandidateSet(input: {
+  configuredInterpreter?: string | null;
+  lastKnownGoodInterpreter?: string | null;
+  currentHostKey?: string | null;
+  currentHomeDir?: string | null;
+  lastKnownGoodInterpreterHostKey?: string | null;
+  workspaceRoots?: string[];
+  includeDefaultCommands?: boolean;
+}): InterpreterCandidateBuildResult {
   const includeDefaultCommands = input.includeDefaultCommands !== false;
   const workspaceRoots = (input.workspaceRoots || []).filter((value) => value.trim().length > 0);
   const out: InterpreterCandidate[] = [];
+  const rejected: RejectedInterpreterCandidate[] = [];
   const seen = new Set<string>();
 
   const addCandidate = (
@@ -78,7 +110,25 @@ export function buildInterpreterCandidates(input: {
     const normalized = (executable || '').trim();
     if (!normalized) return;
     if (seen.has(normalized)) return;
-    if (path.isAbsolute(normalized) && !fs.existsSync(normalized)) return;
+    if (source === 'cached') {
+      const hostKeyRejection = staleHostKeyReason({
+        candidateHostKey: input.lastKnownGoodInterpreterHostKey || null,
+        currentHostKey: input.currentHostKey || null,
+      });
+      if (hostKeyRejection) {
+        rejected.push({ executable: normalized, source, detail, reason: hostKeyRejection });
+        return;
+      }
+    }
+    const homeMismatchReason = differentHomePathReason(normalized, input.currentHomeDir || null);
+    if (homeMismatchReason && source === 'cached') {
+      rejected.push({ executable: normalized, source, detail, reason: homeMismatchReason });
+      return;
+    }
+    if (path.isAbsolute(normalized) && !fs.existsSync(normalized)) {
+      rejected.push({ executable: normalized, source, detail, reason: 'Absolute interpreter path does not exist on this host.' });
+      return;
+    }
     seen.add(normalized);
     out.push({ executable: normalized, source, detail });
   };
@@ -104,7 +154,10 @@ export function buildInterpreterCandidates(input: {
     addCandidate('python3', 'default', 'Default python3 executable');
   }
 
-  return out;
+  return {
+    candidates: out,
+    rejected,
+  };
 }
 
 export function runPythonImportDiagnostics(
@@ -205,10 +258,19 @@ export function interpreterPriorityScore(source: InterpreterCandidateSource): nu
 export function selectBestInterpreterCandidate<T extends {
   candidate: InterpreterCandidate;
   coreReady: boolean;
+  resolvedPythonPath?: string | null;
+  diagnosticsError?: string;
 }>(
   evaluations: T[]
 ): T | null {
   if (evaluations.length === 0) return null;
+
+  const configured = evaluations.find((evaluation) => (
+    evaluation.candidate.source === 'setting' && interpreterCandidateUsable(evaluation)
+  ));
+  if (configured) {
+    return configured;
+  }
 
   const sorted = [...evaluations].sort((a, b) => {
     const aScore = (a.coreReady ? 10000 : 0) + interpreterPriorityScore(a.candidate.source);
@@ -231,6 +293,9 @@ export function interpreterSelectionReason(input: {
   chosenCoreReady: boolean;
   fallbackReason?: string;
 }): string {
+  if (input.chosenSource === 'setting' && !input.chosenCoreReady) {
+    return `Using configured interpreter (${input.chosenExecutable}) because it was explicitly selected; diagnostics are reporting failures against that interpreter instead of masking them with cached fallback state.`;
+  }
   if (input.chosenCoreReady) {
     switch (input.chosenSource) {
       case 'setting':
@@ -277,11 +342,96 @@ function parseJsonFromMixedStdout(stdout: string): any {
   return JSON.parse(stdout.slice(firstBrace, lastBrace + 1));
 }
 
+export function staleHostKeyReason(input: {
+  candidateHostKey?: string | null;
+  currentHostKey?: string | null;
+}): string | null {
+  const candidateHostKey = (input.candidateHostKey || '').trim();
+  const currentHostKey = (input.currentHostKey || '').trim();
+  if (!candidateHostKey) return null;
+  if (!currentHostKey) return null;
+  if (candidateHostKey === currentHostKey) return null;
+  return `Cached interpreter belongs to a different host/workspace context (${candidateHostKey}) than the active context (${currentHostKey}).`;
+}
+
+export function differentHomePathReason(executable: string, currentHomeDir: string | null): string | null {
+  const normalized = executable.trim();
+  const homeDir = (currentHomeDir || '').trim();
+  if (!normalized || !path.isAbsolute(normalized) || !homeDir) {
+    return null;
+  }
+
+  const resolvedExecutable = path.resolve(normalized);
+  const resolvedHome = path.resolve(homeDir);
+  const parentHome = path.dirname(resolvedHome);
+  if (parentHome === resolvedHome) {
+    return null;
+  }
+
+  if (!resolvedExecutable.startsWith(parentHome + path.sep)) {
+    return null;
+  }
+  if (resolvedExecutable === resolvedHome || resolvedExecutable.startsWith(resolvedHome + path.sep)) {
+    return null;
+  }
+  return `Absolute interpreter path (${resolvedExecutable}) belongs to a different home prefix than the active host home (${resolvedHome}).`;
+}
+
+function interpreterCandidateUsable<T extends {
+  resolvedPythonPath?: string | null;
+  diagnosticsError?: string;
+}>(evaluation: T): boolean {
+  if (evaluation.resolvedPythonPath) {
+    return true;
+  }
+  const errorText = (evaluation.diagnosticsError || '').trim().toLowerCase();
+  if (!errorText) {
+    return true;
+  }
+  return !(
+    errorText.includes('enoent')
+    || errorText.includes('not found')
+    || errorText.includes('no such file')
+    || errorText.includes('cannot find')
+  );
+}
+
 function defaultVenvPythonCandidates(): string[] {
   const home = os.homedir();
   return COMMON_USER_VENV_PYTHONS
     .map((candidate) => expandHome(candidate, home))
     .filter((candidate) => fs.existsSync(candidate));
+}
+
+function preferredSelectedInterpreter(activeHostKey: string | null, currentHomeDir: string | null): string | null {
+  const executable = (process.env.MD_VIEWER_PYTHON || '').trim() || null;
+  if (!executable) return null;
+  const source = (process.env.MD_VIEWER_PYTHON_SOURCE || '').trim();
+  const candidateHostKey = (process.env.MD_VIEWER_PYTHON_HOST_KEY || '').trim() || null;
+
+  if (source === 'cached') {
+    if (staleHostKeyReason({ candidateHostKey, currentHostKey: activeHostKey })) {
+      return null;
+    }
+    if (differentHomePathReason(executable, currentHomeDir)) {
+      return null;
+    }
+  }
+
+  return executable;
+}
+
+function preferredLastKnownInterpreter(activeHostKey: string | null, currentHomeDir: string | null): string | null {
+  const executable = (process.env.MD_VIEWER_LAST_GOOD_PYTHON || '').trim() || null;
+  if (!executable) return null;
+  const candidateHostKey = (process.env.MD_VIEWER_LAST_GOOD_PYTHON_HOST_KEY || '').trim() || null;
+  if (staleHostKeyReason({ candidateHostKey, currentHostKey: activeHostKey })) {
+    return null;
+  }
+  if (differentHomePathReason(executable, currentHomeDir)) {
+    return null;
+  }
+  return executable;
 }
 
 function expandHome(value: string, home: string): string {

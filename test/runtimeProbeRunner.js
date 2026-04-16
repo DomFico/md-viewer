@@ -74,10 +74,36 @@ async function runScenarioList() {
   }
 }
 
+async function applyRuntimeConfigOverrides() {
+  const raw = process.env.MD_VIEWER_RUNTIME_CONFIG_JSON;
+  if (!raw) return;
+
+  let updates;
+  try {
+    updates = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Failed to parse MD_VIEWER_RUNTIME_CONFIG_JSON: ${String(err)}`);
+  }
+
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+    throw new Error('MD_VIEWER_RUNTIME_CONFIG_JSON must be a JSON object.');
+  }
+
+  for (const [key, value] of Object.entries(updates)) {
+    await vscode.workspace.getConfiguration('mdViewer').update(
+      key,
+      value,
+      vscode.ConfigurationTarget.Global
+    );
+    appendProbeLine(`CONFIG_UPDATE mdViewer.${key}=${JSON.stringify(value)}`);
+  }
+}
+
 async function run() {
   console.log('[RuntimeProbe] Runner started');
   appendProbeLine(`RUN_START scenarios=${process.env.MD_VIEWER_RUNTIME_SCENARIOS || '<missing>'}`);
   await delay(1500);
+  await applyRuntimeConfigOverrides();
   await runScenarioList();
   await delay(2500);
   await vscode.commands.executeCommand('workbench.action.closeAllEditors');

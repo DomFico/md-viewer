@@ -1,18 +1,21 @@
 import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { spawnSync } from 'child_process';
-import { bridgeCandidatePaths, RUNTIME_BRIDGE_SCRIPTS, resolveRuntimeBridgePath } from '../runtime/bridgePaths';
+import { bridgeCandidatePaths, resolveRuntimeBridge, RUNTIME_BRIDGE_SCRIPTS } from '../runtime/bridgePaths';
 import {
   amberTopologyReady,
-  buildInterpreterCandidates,
+  buildInterpreterCandidateSet,
   coreRuntimeReady,
+  differentHomePathReason,
   InterpreterCandidate,
+  InterpreterCandidateBuildResult,
   interpreterSelectionReason,
   netcdfImportReady,
   preferredPythonExecutable,
   resolveExecutablePath,
   runPythonImportDiagnostics,
   selectBestInterpreterCandidate,
+  staleHostKeyReason,
   workspaceRootsFromFolders,
 } from '../runtime/pythonRuntime';
 import {
@@ -55,6 +58,7 @@ type BridgeCapabilityProbeResult = {
 type DiagnosticsSummary = {
   configuredPythonInterpreter: string | null;
   lastKnownGoodInterpreter: string | null;
+  rejectedLastKnownGoodInterpreter: string | null;
   selectedPythonExecutable: string;
   selectedPythonSource: string;
   selectedPythonReason: string;
@@ -64,7 +68,19 @@ type DiagnosticsSummary = {
     remoteName: string | null;
     locationLabel: string;
     hostKey: string;
+    hostName: string;
+    homeDir: string | null;
     workspaceRoot: string | null;
+  };
+  interpreterDecision: {
+    configuredInterpreterRejectedReason: string | null;
+    lastKnownGoodRejectedReason: string | null;
+    rejectedCandidates: Array<{
+      executable: string;
+      source: string;
+      detail: string;
+      reason: string;
+    }>;
   };
   pythonVersion: string | null;
   pythonImports: Record<string, { ok: boolean; error?: string }>;
@@ -109,6 +125,8 @@ function extensionHostInfo(): DiagnosticsSummary['extensionHost'] {
     remoteName,
     locationLabel: remoteName ? `remote (${remoteName})` : 'local',
     hostKey: info.key,
+    hostName: info.hostName,
+    homeDir: info.homeDir,
     workspaceRoot: info.workspaceRoot,
   };
 }
@@ -124,12 +142,18 @@ function configuredPythonInterpreter(): string | null {
 function buildBridgeDiagnostics(scriptName: string): {
   selectedPath: string;
   selectedExists: boolean;
+  selectedSource: string;
+  extensionRoot: string | null;
+  pathMatchesExtensionRoot: boolean | null;
   candidatePaths: string[];
 } {
-  const selectedPath = resolveRuntimeBridgePath(scriptName);
+  const resolution = resolveRuntimeBridge(scriptName);
   return {
-    selectedPath,
-    selectedExists: fs.existsSync(selectedPath),
+    selectedPath: resolution.selectedPath,
+    selectedExists: resolution.selectedExists && fs.existsSync(resolution.selectedPath),
+    selectedSource: resolution.selectedSource,
+    extensionRoot: resolution.extensionRoot,
+    pathMatchesExtensionRoot: resolution.pathMatchesExtensionRoot,
     candidatePaths: bridgeCandidatePaths(scriptName),
   };
 }
@@ -390,23 +414,56 @@ export async function runDependencyDiagnostics(context: vscode.ExtensionContext)
   const configuredPython = configuredPythonInterpreter();
   const lastKnownState = getHostRuntimeState(context);
   const envLastKnown = (process.env.MD_VIEWER_LAST_GOOD_PYTHON || '').trim();
-  const lastKnownGoodInterpreter = lastKnownState?.interpreter || (envLastKnown.length > 0 ? envLastKnown : null);
+  const envLastKnownHostKey = (process.env.MD_VIEWER_LAST_GOOD_PYTHON_HOST_KEY || '').trim() || null;
+  const lastKnownStateRejectedReason = lastKnownState?.interpreter
+    ? differentHomePathReason(lastKnownState.interpreter, hostInfo.homeDir)
+    : null;
+  const envLastKnownRejectedReason = envLastKnown.length > 0
+    ? staleHostKeyReason({ candidateHostKey: envLastKnownHostKey, currentHostKey: hostInfo.hostKey })
+      || differentHomePathReason(envLastKnown, hostInfo.homeDir)
+    : null;
+  const lastKnownGoodInterpreter = (!lastKnownStateRejectedReason && lastKnownState?.interpreter)
+    || ((!envLastKnownRejectedReason && envLastKnown.length > 0) ? envLastKnown : null);
+  const lastKnownGoodInterpreterSource = !lastKnownStateRejectedReason && lastKnownState?.interpreter
+    ? 'host_state'
+    : (!envLastKnownRejectedReason && envLastKnown.length > 0)
+      ? 'env_last_known'
+      : null;
+  const rejectedLastKnownGoodInterpreter = lastKnownStateRejectedReason
+    ? lastKnownState?.interpreter || null
+    : envLastKnownRejectedReason
+      ? envLastKnown
+      : null;
 
-  const candidates = buildInterpreterCandidates({
+  const candidateBuild: InterpreterCandidateBuildResult = buildInterpreterCandidateSet({
     configuredInterpreter: configuredPython,
     lastKnownGoodInterpreter,
+    currentHostKey: hostInfo.hostKey,
+    currentHomeDir: hostInfo.homeDir,
+    lastKnownGoodInterpreterHostKey: lastKnownGoodInterpreterSource === 'env_last_known'
+      ? envLastKnownHostKey
+      : hostInfo.hostKey,
     workspaceRoots: workspaceRootsFromFolders(vscode.workspace.workspaceFolders),
   });
+  const candidates = candidateBuild.candidates;
+  const configuredInterpreterRejectedReason = candidateBuild.rejected.find((entry) => entry.source === 'setting')?.reason || null;
+  const lastKnownGoodRejectedReason = lastKnownStateRejectedReason
+    || envLastKnownRejectedReason
+    || candidateBuild.rejected.find((entry) => entry.source === 'cached')?.reason
+    || null;
 
   emitCheckpoint('CHK_DEP_1_DIAGNOSTICS_STARTED', {
     configuredPythonInterpreter: configuredPython,
     lastKnownGoodInterpreter,
+    rejectedLastKnownGoodInterpreter,
+    lastKnownGoodInterpreterSource,
     extensionHost: hostInfo,
     candidateExecutables: candidates.map((candidate) => ({
       executable: candidate.executable,
       source: candidate.source,
       detail: candidate.detail,
     })),
+    rejectedCandidates: candidateBuild.rejected,
   });
 
   const evaluations = candidates.map((candidate) => evaluateCandidate(candidate));
@@ -425,6 +482,7 @@ export async function runDependencyDiagnostics(context: vscode.ExtensionContext)
       missingImports: evaluation.missingImports,
       diagnosticsError: evaluation.diagnosticsError,
     })),
+    rejectedCandidates: candidateBuild.rejected,
   });
 
   const chosen = selectBestInterpreterCandidate(evaluations)
@@ -488,6 +546,8 @@ export async function runDependencyDiagnostics(context: vscode.ExtensionContext)
     selectedAmberReady: selectedEval.amberReady,
     selectedNetcdfImportReady: selectedEval.netcdfImportReady,
     extensionHost: hostInfo,
+    configuredInterpreterRejectedReason,
+    lastKnownGoodRejectedReason,
   });
 
   emitCheckpoint('CHK_DEP_8_CAPABILITY_MATRIX', {
@@ -499,11 +559,14 @@ export async function runDependencyDiagnostics(context: vscode.ExtensionContext)
 
   if (selectedEval.coreReady) {
     process.env.MD_VIEWER_LAST_GOOD_PYTHON = selectedEval.candidate.executable;
+    process.env.MD_VIEWER_LAST_GOOD_PYTHON_HOST_KEY = hostInfo.hostKey;
+    process.env.MD_VIEWER_PYTHON = selectedEval.candidate.executable;
+    process.env.MD_VIEWER_PYTHON_SOURCE = selectedEval.candidate.source;
+    process.env.MD_VIEWER_PYTHON_HOST_KEY = hostInfo.hostKey;
     await setHostRuntimeState(context, {
       interpreter: selectedEval.candidate.executable,
       validatedAt: new Date().toISOString(),
       extensionHost: hostInfo.locationLabel,
-      workspaceRoot: hostInfo.workspaceRoot,
       capabilities: capabilitySummary,
       selectionReason: selectedReason,
     });
@@ -515,14 +578,40 @@ export async function runDependencyDiagnostics(context: vscode.ExtensionContext)
     });
   }
 
+  emitCheckpoint('CHK_DEP_14_RUNTIME_CONTEXT_SANITY', {
+    extensionHost: hostInfo,
+    configuredPythonInterpreter: configuredPython,
+    lastKnownGoodInterpreter,
+    rejectedLastKnownGoodInterpreter,
+    selectedPythonExecutable: selectedEval.candidate.executable,
+    selectedPythonSource: selectedEval.candidate.source,
+    configuredInterpreterRejectedReason,
+    lastKnownGoodRejectedReason,
+    bridgeScripts: {
+      [RUNTIME_BRIDGE_SCRIPTS.binaryTrajectory]: binaryBridge,
+      [RUNTIME_BRIDGE_SCRIPTS.parm7Topology]: parm7Bridge,
+    },
+  });
+
   const summary: DiagnosticsSummary = {
     configuredPythonInterpreter: configuredPython,
     lastKnownGoodInterpreter,
+    rejectedLastKnownGoodInterpreter,
     selectedPythonExecutable: selectedEval.candidate.executable,
     selectedPythonSource: selectedEval.candidate.source,
     selectedPythonReason: selectedReason,
     resolvedPythonPath: selectedEval.resolvedPythonPath,
     extensionHost: hostInfo,
+    interpreterDecision: {
+      configuredInterpreterRejectedReason,
+      lastKnownGoodRejectedReason,
+      rejectedCandidates: candidateBuild.rejected.map((entry) => ({
+        executable: entry.executable,
+        source: entry.source,
+        detail: entry.detail,
+        reason: entry.reason,
+      })),
+    },
     pythonVersion: selectedEval.pythonVersion,
     pythonImports: selectedEval.pythonImports,
     candidateEvaluations: evaluations.map((evaluation) => ({

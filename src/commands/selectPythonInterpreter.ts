@@ -6,7 +6,7 @@ import {
   resolveExecutablePath,
   workspaceRootsFromFolders,
 } from '../runtime/pythonRuntime';
-import { getHostRuntimeState } from '../runtime/hostRuntimeState';
+import { getHostRuntimeState, hostContextInfo } from '../runtime/hostRuntimeState';
 
 type InterpreterPick = vscode.QuickPickItem & {
   value: string;
@@ -63,6 +63,7 @@ export async function selectPythonInterpreter(context: vscode.ExtensionContext):
   const preferred = preferredPythonExecutable();
   const target = settingTarget();
   const hostState = getHostRuntimeState(context);
+  const hostInfo = hostContextInfo();
 
   const picks: InterpreterPick[] = [];
   const seen = new Set<string>();
@@ -78,6 +79,9 @@ export async function selectPythonInterpreter(context: vscode.ExtensionContext):
   const candidates = buildInterpreterCandidates({
     configuredInterpreter: configured || null,
     lastKnownGoodInterpreter: hostState?.interpreter || null,
+    currentHostKey: hostInfo.key,
+    currentHomeDir: hostInfo.homeDir,
+    lastKnownGoodInterpreterHostKey: hostInfo.key,
     workspaceRoots: workspaceRootsFromFolders(vscode.workspace.workspaceFolders),
   });
 
