@@ -5,7 +5,7 @@
 Local VSIX install:
 
 ```bash
-code --install-extension /path/to/md-viewer-0.1.0-rc4.vsix --force
+code --install-extension /path/to/md-viewer-<version>.vsix --force
 ```
 
 On Remote SSH windows, install the extension on the remote side (command palette or remote `code` CLI session).
@@ -54,6 +54,12 @@ Status model:
 - `OK`: ready on selected interpreter
 - `DEGRADED`: partially usable / host-dependent (common for `.nc` on HPC without full netCDF stack)
 - `BLOCKED`: not runnable until missing requirements are fixed
+
+Supported dataset notes:
+- common trajectories include `.xyz`, `.xtc`, `.dcd`, `.trr`, `.nc`, `.rst7`, `.inpcrd`, and `.mdcrd`
+- common topologies include `.pdb`, `.gro`, `.parm7`, and `.prmtop`
+- DNA/RNA systems use nucleic-acid backbone trace anchors when topology metadata is available
+- Amber-family topology/trajectory pairings must have matching atom counts
 
 ## 5) Optional bootstrap flow for Remote SSH/HPC
 

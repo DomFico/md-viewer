@@ -9,16 +9,31 @@ A molecular dynamics dataset viewer for VS Code with setup-panel based loading, 
 - Launch from Explorer on supported trajectory/topology files via **Launch MD Viewer**
 - Resolve dataset pairings in a setup panel with override controls
 - Render trajectories with residue-aware navigation and selection
-- Support trajectories: `.xyz`, `.xtc`, `.dcd`, `.trr`, `.nc`, `.rst7`
-- Support topologies: `.pdb`, `.gro`, `.parm7`
+- Show useful polymer traces for proteins and nucleic acids
+- Support trajectories: `.xyz`, `.xtc`, `.dcd`, `.trr`, `.nc`, `.rst7`, `.inpcrd`, `.mdcrd`
+- Support topologies: `.pdb`, `.gro`, `.parm7`, `.prmtop`
 - Stream binary trajectories through metadata-first init + chunked frame requests
+
+---
+
+## Molecular Semantics
+
+- Protein traces use `CA` atoms.
+- DNA/RNA traces use nucleotide backbone anchors, preferring `P` with sugar-backbone fallbacks such as `C4'`, `C3'`, and `O3'`.
+- Residue selection highlights selected atoms, selected bonds/sticks, and nearby/local-context bonds when topology bond data is available.
+- Ligands, ions, common solvent, and custom/nonstandard residues are routed separately so bulk solvent does not dominate navigation.
+
+Amber-family notes:
+- `.parm7` and `.prmtop` are handled through the Amber topology bridge.
+- `.nc`, `.rst7`, `.inpcrd`, and `.mdcrd` are handled through the Python bridge/runtime path.
+- Topology and trajectory atom counts must match; the viewer rejects mismatched pairings rather than weakening topology semantics.
 
 ---
 
 ## Install from VSIX
 
 ```bash
-code --install-extension md-viewer-0.1.0-rc4.vsix
+code --install-extension md-viewer-<version>.vsix
 ```
 
 Then run:
