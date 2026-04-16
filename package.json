@@ -3,7 +3,7 @@
   "publisher": "DominicFico",
   "displayName": "MD Viewer",
   "description": "General molecular dynamics dataset viewer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,7 +28,6 @@
     "onCommand:md-viewer.bootstrapRemoteRuntime"
   ],
   "extensionKind": [
-    "ui",
     "workspace"
   ],
   "main": "./out/extension.js",
