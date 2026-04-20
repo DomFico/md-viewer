@@ -58,16 +58,6 @@ See deployment guide:
 
 ---
 
-## Prototype test asset
-
-```
-outputs/ala3_short_explicit_md/ala3_peptide_frames.xyz
-```
-
-21 frames, 33 atoms (alanine tripeptide).
-
----
-
 ## How to run the extension in VS Code
 
 ### 1. Install dependencies
@@ -96,13 +86,12 @@ In VS Code:
 - Press **F5** (or go to Run → Start Debugging)
 - VS Code will open a new **Extension Development Host** window
 
-### 4. Open the trajectory
+### 4. Open a trajectory
 
 In the Extension Development Host window:
-1. Open the `md-preview` repo folder
-2. In the Explorer, expand `outputs/ala3_short_explicit_md/`
-3. Right-click `ala3_peptide_frames.xyz`
-4. Click **Launch MD Viewer**
+1. Open a folder that contains one of your trajectory/topology datasets.
+2. In the Explorer, right-click a supported file such as `.xyz`, `.pdb`, `.gro`, `.xtc`, `.dcd`, `.trr`, `.nc`, `.rst7`, `.inpcrd`, `.mdcrd`, `.parm7`, or `.prmtop`.
+3. Click **Launch MD Viewer**.
 
 The viewer panel opens and the trajectory begins at frame 1. Hit Play ▶ or press **Space**.
 

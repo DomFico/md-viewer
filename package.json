@@ -7,11 +7,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dom/md-preview"
+    "url": "git+https://github.com/DomFico/md-viewer.git"
   },
-  "homepage": "https://github.com/dom/md-preview",
+  "homepage": "https://github.com/DomFico/md-viewer",
   "bugs": {
-    "url": "https://github.com/dom/md-preview/issues"
+    "url": "https://github.com/DomFico/md-viewer/issues"
   },
   "engines": {
     "vscode": "^1.85.0"
