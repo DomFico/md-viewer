@@ -14,8 +14,12 @@ Presentation/assets-only refresh for MD Viewer. No viewer/runtime behavior was c
 ### Logos
 - `docs/assets/logo/horizontal.pdf`
 - `docs/assets/logo/for_vscode_marketplace.pdf`
+- `docs/assets/logo/horizontal.png`
+  - PNG render used by GitHub README, generated from `horizontal.pdf`
+- `docs/assets/logo/for_vscode_marketplace.png`
+  - PNG render used by VS Code package metadata, generated from `for_vscode_marketplace.pdf`
 
-The prior generated PNG logo exports were removed so the repository keeps the supplied PDFs as the source logo assets without modification.
+The prior generated PNG logo exports were removed. The supplied PDFs remain in the repository as source logo assets, with PNG renders added only where GitHub and VS Code need image files for display.
 
 ### Videos
 - `docs/assets/videos/monomer_ligand_solvent_demo.mp4`
@@ -23,20 +27,25 @@ The prior generated PNG logo exports were removed so the repository keeps the su
   - H.264 MP4, 1440x900, 30 fps, no audio, fast-start metadata
 - `docs/assets/videos/monomer_ligand_solvent_poster.png`
   - poster/thumbnail from the refreshed monomer demo
+- `docs/assets/videos/monomer_ligand_solvent_preview.gif`
+  - autoplaying README preview generated from the refreshed monomer demo
 - `docs/assets/videos/complexes_nucleotides_demo.mp4`
   - generated from `complexes.mov`
   - H.264 MP4, 1440x900, 30 fps, no audio, fast-start metadata
 - `docs/assets/videos/complexes_poster.png`
   - poster/thumbnail from the refreshed complexes demo
+- `docs/assets/videos/complexes_nucleotides_preview.gif`
+  - autoplaying README preview generated from the refreshed complexes demo
 
 The original `.mov` files were not copied into the repository because one source file exceeds GitHub's regular Git object size limit. The MP4 derivatives keep the README playback path lightweight and browser-friendly.
 
 ## README/package updates
 - `README.md`
-  - replaced the prior PNG logo header with a link to `docs/assets/logo/horizontal.pdf`
-  - refreshed the Showcase thumbnails and linked them directly to raw GitHub-hosted MP4 playback URLs
+  - displays `docs/assets/logo/horizontal.png` as the header logo
+  - displays animated GIF previews in the Showcase table
+  - links each animated preview directly to raw GitHub-hosted MP4 playback URLs
 - `package.json`
-  - removed the old `icon` field because it pointed at a deleted PNG export, and VS Code package icons should not point at PDF assets
+  - points `icon` at `docs/assets/logo/for_vscode_marketplace.png`
 
 ## Proof checks
 - Verified README-linked assets exist on disk.
