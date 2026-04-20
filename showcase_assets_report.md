@@ -1,80 +1,44 @@
 # Showcase Assets Report
 
 ## Scope
-Presentation/assets-only pass for MD Viewer. No viewer/runtime behavior was changed.
+Presentation/assets-only refresh for MD Viewer. No viewer/runtime behavior was changed.
 
-## Source assets reviewed
-- Video source: `/home/dom/Videos/Screencasts/monomer_ligand_solvent.webm`
-  - source format: VP8 WebM
-  - source size: 72 MB
-  - source resolution/duration: 3837x2040, 52.44 s
-- Video source: `/home/dom/Videos/Screencasts/complexes.webm`
-  - source format: VP8 WebM
-  - source size: 145 MB
-  - source resolution/duration: 3837x2040, 51.93 s
-- Logo source: `/home/dom/Desktop/Presentation 7-1.pdf`
-  - one 16:9 PDF slide, 960 x 540 pt
-  - source contains substantial whitespace and slide-style composition, so it is not ideal as a direct Marketplace icon
+## Source assets
+- Logo PDF: `/Users/dom/Coding/videos_and_logo/horizontal.pdf`
+- Marketplace/source logo PDF: `/Users/dom/Coding/videos_and_logo/for_vscode_marketplace.pdf`
+- Monomer/ligand/solvent video: `/Users/dom/Coding/videos_and_logo/ligand_monomer_solvent.mov`
+- Complexes/nucleotides video: `/Users/dom/Coding/videos_and_logo/complexes.mov`
 
-## Generated assets
+## Repository assets
 
-### Logo exports
-- `docs/assets/logo/md-viewer-icon.png` - 256x256 transparent PNG, package/Marketplace icon
-- `docs/assets/logo/md-viewer-icon-256.png` - 256x256 transparent PNG
-- `docs/assets/logo/md-viewer-icon-512.png` - 512x512 transparent PNG
-- `docs/assets/logo/md-viewer-icon-1024.png` - 1024x1024 transparent PNG
-- `docs/assets/logo/md-viewer-mark-transparent.png` - extracted transparent protein/cartoon mark
-- `docs/assets/logo/md-viewer-logo-horizontal.png` - README/header lockup on white background
-- `docs/assets/logo/md-viewer-logo-horizontal-light-bg.png` - transparent horizontal lockup with dark text
-- `docs/assets/logo/md-viewer-logo-horizontal-dark-bg.png` - transparent horizontal lockup with light text
+### Logos
+- `docs/assets/logo/horizontal.pdf`
+- `docs/assets/logo/for_vscode_marketplace.pdf`
 
-Logo cleanup performed:
-- cropped away slide whitespace
-- removed white/light neutral background behind the protein/cartoon mark
-- exported square icon sizes suitable for Marketplace/GitHub use
-- rebuilt a clean horizontal logo lockup because the PDF text placement was slide-oriented and not ideal for a tight header asset
+The prior generated PNG logo exports were removed so the repository keeps the supplied PDFs as the source logo assets without modification.
 
-### Video exports
+### Videos
 - `docs/assets/videos/monomer_ligand_solvent_demo.mp4`
-  - transformed from original WebM
-  - 1280x680, H.264 MP4, 30 fps, no audio
-  - output size: about 2.3 MB
+  - generated from `ligand_monomer_solvent.mov`
+  - H.264 MP4, 1440x900, 30 fps, no audio, fast-start metadata
 - `docs/assets/videos/monomer_ligand_solvent_poster.png`
-  - poster/thumbnail from the viewer portion of the demo
+  - poster/thumbnail from the refreshed monomer demo
 - `docs/assets/videos/complexes_nucleotides_demo.mp4`
-  - transformed from original WebM
-  - 1280x680, H.264 MP4, 30 fps, no audio
-  - output size: about 4.1 MB
+  - generated from `complexes.mov`
+  - H.264 MP4, 1440x900, 30 fps, no audio, fast-start metadata
 - `docs/assets/videos/complexes_poster.png`
-  - poster/thumbnail from the complex/nucleotide/multi-chain portion of the demo
+  - poster/thumbnail from the refreshed complexes demo
 
-Video decision:
-- original WebM files were not copied into the repo because they are high-resolution source captures and large for front-page/package use
-- smaller MP4 derivatives were generated for practical README/Marketplace presentation
+The original `.mov` files were not copied into the repository because one source file exceeds GitHub's regular Git object size limit. The MP4 derivatives keep the README playback path lightweight and browser-friendly.
 
 ## README/package updates
 - `README.md`
-  - added logo header image
-  - added compact Showcase table with two demo thumbnails linking to MP4 demos
-  - kept the section short to avoid cluttering the front page
+  - replaced the prior PNG logo header with a link to `docs/assets/logo/horizontal.pdf`
+  - refreshed the Showcase thumbnails and linked them directly to raw GitHub-hosted MP4 playback URLs
 - `package.json`
-  - added `icon: docs/assets/logo/md-viewer-icon.png`
-  - added dark Marketplace gallery banner metadata
-
-## Recommendations
-- Primary showcase video: `docs/assets/videos/monomer_ligand_solvent_demo.mp4`
-  - best first impression because it demonstrates monomer, ligand, solvent/ion rendering, and solvent visibility controls
-- Secondary showcase video: `docs/assets/videos/complexes_nucleotides_demo.mp4`
-  - useful follow-up because it demonstrates complexes, nucleotides, multiple chains, and broader structural complexity
-- Marketplace icon: `docs/assets/logo/md-viewer-icon.png`
-  - square transparent PNG; keep this as the package icon
-- GitHub/README header: `docs/assets/logo/md-viewer-logo-horizontal.png`
-  - predictable on GitHub light backgrounds
-- Gray/skewed source background: drop it for release assets
-  - transparent/clean exports are clearer, smaller, and more reusable across GitHub and Marketplace contexts
+  - removed the old `icon` field because it pointed at a deleted PNG export, and VS Code package icons should not point at PDF assets
 
 ## Proof checks
-- Verified `package.json` parses and `icon` path exists.
 - Verified README-linked assets exist on disk.
-- Ran `npx @vscode/vsce ls` and confirmed the VSIX file list includes README, `package.json`, logo exports, poster thumbnails, and optimized MP4 demos.
-- `.vscodeignore` excludes `*_report.md` so this report remains repo-facing documentation and is not included in the VSIX package.
+- Verified replacement video files are H.264 MP4 files and remain below GitHub's regular repository file size limit.
+- Verified package metadata still parses as JSON.

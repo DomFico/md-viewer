@@ -5,7 +5,6 @@
   "description": "General molecular dynamics dataset viewer",
   "version": "0.1.5",
   "license": "MIT",
-  "icon": "docs/assets/logo/md-viewer-icon.png",
   "galleryBanner": {
     "color": "#101820",
     "theme": "dark"
