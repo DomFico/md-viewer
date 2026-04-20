@@ -15,7 +15,7 @@ Presentation/assets-only refresh for MD Viewer. No viewer/runtime behavior was c
 - `docs/assets/logo/horizontal.pdf`
 - `docs/assets/logo/for_vscode_marketplace.pdf`
 - `docs/assets/logo/horizontal.png`
-  - high-resolution PNG render used by GitHub README, generated from `horizontal.pdf`
+  - high-resolution cropped PNG render used by GitHub README, generated from `horizontal.pdf`
 - `docs/assets/logo/for_vscode_marketplace.png`
   - high-resolution PNG render used by VS Code package metadata, generated from `for_vscode_marketplace.pdf`
 
