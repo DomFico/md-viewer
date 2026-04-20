@@ -10,6 +10,7 @@ test/**
 **/*.map
 tsconfig.json
 .gitignore
+*_report.md
 
 # Keep only runtime bridge scripts.
 scripts/**

@@ -1,6 +1,19 @@
 # MD Viewer — VS Code Extension
 
+<p align="center">
+  <img src="docs/assets/logo/md-viewer-logo-horizontal.png" alt="MD Viewer logo" width="720">
+</p>
+
 A molecular dynamics dataset viewer for VS Code with setup-panel based loading, topology pairing, and chunked binary trajectory support.
+
+---
+
+## Showcase
+
+| Monomer, ligand, solvent, and ions | Complexes, nucleotides, and multiple chains |
+| --- | --- |
+| [![Monomer ligand solvent demo](docs/assets/videos/monomer_ligand_solvent_poster.png)](docs/assets/videos/monomer_ligand_solvent_demo.mp4) | [![Complexes nucleotides demo](docs/assets/videos/complexes_poster.png)](docs/assets/videos/complexes_nucleotides_demo.mp4) |
+| Shows a monomeric system with a bound ligand, solvent/ion point-cloud rendering, and solvent visibility controls. | Shows larger structural systems with protein complexes, nucleotide traces, multiple chains, and local-context navigation. |
 
 ---
 
