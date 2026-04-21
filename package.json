@@ -3,7 +3,7 @@
   "publisher": "DominicFico",
   "displayName": "MD Viewer",
   "description": "General molecular dynamics dataset viewer",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "license": "MIT",
   "icon": "docs/assets/logo/for_vscode_marketplace.png",
   "galleryBanner": {
@@ -95,6 +95,27 @@
           "type": "string",
           "default": "",
           "description": "Optional absolute path or command name for the Python interpreter used by MD Viewer bridge scripts. On Remote SSH/HPC, set this on the remote host interpreter."
+        },
+        "mdViewer.bootstrapPipExtraArgs": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional extra arguments appended to MD Viewer bootstrap pip commands, for example custom --index-url or --trusted-host options for managed HPC package indexes."
+        },
+        "mdViewer.bootstrapPackageOverrides": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Optional bootstrap package requirement overrides by package name, for example { \"mdtraj\": \"mdtraj==1.11.1.post1\" }. Leave empty for the default modern package path."
+        },
+        "mdViewer.bootstrapAllowSourceBuild": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow bootstrap to attempt source builds when no MDTraj wheel is available. Disabled by default because managed HPC systems often lack Python.h / python3-devel headers."
         },
         "mdViewer.backgroundColor": {
           "type": "string",

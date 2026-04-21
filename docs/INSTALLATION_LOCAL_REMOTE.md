@@ -67,12 +67,23 @@ Supported dataset notes:
 
 1. Create `~/.venvs/mdviewer`
 2. Upgrade `pip setuptools wheel`
-3. Install `numpy scipy mdtraj`
-4. Optionally install `netCDF4`
-5. Set `mdViewer.pythonInterpreter`
-6. Re-run diagnostics
+3. Run a Python/runtime preflight (`Python.h`, include dir, platform, Python version)
+4. Probe for an MDTraj binary wheel before installing core packages
+5. Install `numpy scipy mdtraj`
+6. Optionally install `netCDF4`
+7. Set `mdViewer.pythonInterpreter`
+8. Re-run diagnostics
 
 If `netCDF4` fails due MPI/module linkage, load cluster modules and re-run diagnostics.
+
+Python 3.10+ remains the preferred bootstrap path. Python 3.9 on managed HPC systems is best-effort / legacy: if no compatible MDTraj wheel is available, pip may otherwise fall into a source build that needs `Python.h` / `python3-devel`, which many clusters do not expose to users. MD Viewer now probes wheel availability first and surfaces clearer guidance instead of silently continuing into an opaque source-build failure.
+
+Advanced bootstrap settings:
+- `mdViewer.bootstrapPipExtraArgs`: append extra pip flags, such as custom package indexes
+- `mdViewer.bootstrapPackageOverrides`: override package specs, such as `{ "mdtraj": "mdtraj==1.11.1.post1" }`
+- `mdViewer.bootstrapAllowSourceBuild`: allow source builds when no MDTraj wheel is available; disabled by default because it commonly fails on managed HPC systems without development headers
+
+When a Python 3.9 runtime has no modern MDTraj wheel and no explicit package overrides, bootstrap may try a targeted legacy fallback (`numpy<2`, `scipy<1.14`, `mdtraj<1.10`) rather than making those older constraints the default for everyone.
 
 Latest tested HPC outcome for this release branch:
 - fresh system interpreter can start `BLOCKED` (expected)
