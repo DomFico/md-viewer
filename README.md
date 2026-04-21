@@ -10,8 +10,8 @@
 
 | Monomer, ligand, solvent, and ions | Complexes, nucleotides, and multiple chains |
 | --- | --- |
-| [![Monomer ligand solvent demo](docs/assets/videos/monomer_ligand_solvent_poster.png)](https://raw.githubusercontent.com/DomFico/md-viewer/release/v0.1.0/docs/assets/videos/monomer_ligand_solvent_demo.mp4) | [![Complexes nucleotides demo](docs/assets/videos/complexes_poster.png)](https://raw.githubusercontent.com/DomFico/md-viewer/release/v0.1.0/docs/assets/videos/complexes_nucleotides_demo.mp4) |
-| Shows a monomeric system with a bound ligand, solvent/ion point-cloud rendering, and solvent visibility controls. | Shows larger structural systems with protein complexes, nucleotide traces, multiple chains, and local-context navigation. |
+| [![Autoplaying monomer ligand solvent demo](docs/assets/videos/monomer_ligand_solvent_30s.gif)](https://raw.githubusercontent.com/DomFico/md-viewer/release/v0.1.0/docs/assets/videos/monomer_ligand_solvent_demo.mp4) | [![Autoplaying complexes nucleotides demo](docs/assets/videos/complexes_nucleotides_30s.gif)](https://raw.githubusercontent.com/DomFico/md-viewer/release/v0.1.0/docs/assets/videos/complexes_nucleotides_demo.mp4) |
+| Autoplay preview: monomeric system with a bound ligand, solvent/ion point-cloud rendering, and solvent visibility controls. Click for the full MP4. | Autoplay preview: larger structural systems with protein complexes, nucleotide traces, multiple chains, and local-context navigation. Click for the full MP4. |
 
 ---
 
