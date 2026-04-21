@@ -38,6 +38,14 @@ type BootstrapFailureGuidance = {
   details: string[];
 };
 
+type BootstrapCorePlan = {
+  installRequirements: string[];
+  probeRequirement: string;
+  legacyEligible: boolean;
+  description: string;
+  packageOverridesActive: boolean;
+};
+
 const PREFLIGHT_SNIPPET = `
 import json, os, pathlib, platform, sys, sysconfig
 include_dir = sysconfig.get_paths().get("include") or sysconfig.get_config_var("INCLUDEPY") or ""
@@ -217,6 +225,36 @@ function hasCorePackageOverrides(overrides: Record<string, string>): boolean {
 
 function mdtrajRequirement(requirements: string[]): string {
   return requirements.find((requirement) => requirement.toLowerCase().startsWith('mdtraj')) || 'mdtraj';
+}
+
+function buildModernCorePlan(
+  preflight: BootstrapPreflight,
+  overrides: Record<string, string>
+): BootstrapCorePlan {
+  const installRequirements = modernCoreRequirements(overrides);
+  const packageOverridesActive = hasCorePackageOverrides(overrides);
+  const selectedMdtrajRequirement = mdtrajRequirement(installRequirements);
+  const legacyEligible = isPython39(preflight) && !packageOverridesActive;
+
+  if (legacyEligible && selectedMdtrajRequirement === 'mdtraj') {
+    return {
+      installRequirements,
+      probeRequirement: 'mdtraj>=1.10',
+      legacyEligible,
+      packageOverridesActive,
+      description: 'Python 3.9 default bootstrap probes for a modern MDTraj wheel before using unpinned modern package specs.',
+    };
+  }
+
+  return {
+    installRequirements,
+    probeRequirement: selectedMdtrajRequirement,
+    legacyEligible,
+    packageOverridesActive,
+    description: packageOverridesActive
+      ? 'Package overrides detected; probing the overridden MDTraj requirement exactly.'
+      : 'Modern/default bootstrap probes the selected MDTraj requirement.',
+  };
 }
 
 function bootstrapFailureGuidance(input: {
@@ -413,6 +451,7 @@ export async function bootstrapRemoteRuntime(context: vscode.ExtensionContext): 
 
   let preflight: BootstrapPreflight | null = null;
   let selectedCoreRequirements = modernCoreRequirements(packageOverrides);
+  let modernCorePlan: BootstrapCorePlan | null = null;
   let usedLegacyFallback = false;
   let sourceBuildAllowedAfterProbe = false;
 
@@ -517,7 +556,16 @@ export async function bootstrapRemoteRuntime(context: vscode.ExtensionContext): 
     return;
   }
 
-  const modernProbeRequirement = mdtrajRequirement(selectedCoreRequirements);
+  modernCorePlan = buildModernCorePlan(preflight, packageOverrides);
+  selectedCoreRequirements = modernCorePlan.installRequirements;
+  const modernProbeRequirement = modernCorePlan.probeRequirement;
+  output.appendLine('');
+  output.appendLine(`Modern MDTraj probe requirement: ${modernProbeRequirement}`);
+  output.appendLine(`Modern core install requirements: ${selectedCoreRequirements.join(' ')}`);
+  output.appendLine(`Bootstrap core plan: ${modernCorePlan.description}`);
+  if (modernCorePlan.packageOverridesActive) {
+    output.appendLine('Package overrides detected; automatic Python 3.9 legacy fallback is disabled.');
+  }
   const modernWheelProbe = await runMdtrajWheelProbe(
     output,
     venvPython,
@@ -529,6 +577,9 @@ export async function bootstrapRemoteRuntime(context: vscode.ExtensionContext): 
     extensionHost: hostInfo,
     probe: 'modern',
     requirement: modernProbeRequirement,
+    installRequirements: selectedCoreRequirements,
+    planDescription: modernCorePlan.description,
+    packageOverridesActive: modernCorePlan.packageOverridesActive,
     ok: modernWheelProbe.ok,
     exitCode: modernWheelProbe.exitCode,
     stdoutFirst200Chars: summarizeText(modernWheelProbe.stdout, 200),
@@ -536,20 +587,27 @@ export async function bootstrapRemoteRuntime(context: vscode.ExtensionContext): 
   });
 
   if (!modernWheelProbe.ok) {
-    const canUseLegacyFallback = isPython39(preflight) && !hasCorePackageOverrides(packageOverrides);
+    const canUseLegacyFallback = modernCorePlan.legacyEligible;
     emitCheckpoint('CHK_DEP_17_BOOTSTRAP_LEGACY_FALLBACK', {
       extensionHost: hostInfo,
       considered: true,
       eligible: canUseLegacyFallback,
+      packageOverridesActive: modernCorePlan.packageOverridesActive,
+      modernProbeRequirement,
+      modernInstallRequirements: selectedCoreRequirements,
       reason: canUseLegacyFallback
-        ? 'Python 3.9 with no explicit package overrides; trying legacy wheel-compatible package specs.'
-        : 'Legacy fallback is only used for Python 3.9 without explicit package overrides.',
+        ? 'Python 3.9 with no explicit package overrides and no modern MDTraj wheel; trying legacy wheel-compatible package specs.'
+        : modernCorePlan.packageOverridesActive
+          ? 'Package overrides detected; automatic Python 3.9 legacy fallback is disabled.'
+          : 'Legacy fallback is only used for Python 3.9 without explicit package overrides.',
       preflight,
     });
 
     if (canUseLegacyFallback) {
+      output.appendLine('Modern MDTraj wheel probe failed on Python 3.9; trying legacy wheel-compatible package specs.');
       const legacyRequirements = legacyPython39CoreRequirements(packageOverrides);
       const legacyProbeRequirement = mdtrajRequirement(legacyRequirements);
+      output.appendLine(`Legacy MDTraj probe requirement: ${legacyProbeRequirement}`);
       const legacyWheelProbe = await runMdtrajWheelProbe(
         output,
         venvPython,
@@ -561,6 +619,7 @@ export async function bootstrapRemoteRuntime(context: vscode.ExtensionContext): 
         extensionHost: hostInfo,
         probe: 'legacy_py39',
         requirement: legacyProbeRequirement,
+        installRequirements: legacyRequirements,
         ok: legacyWheelProbe.ok,
         exitCode: legacyWheelProbe.exitCode,
         stdoutFirst200Chars: summarizeText(legacyWheelProbe.stdout, 200),
@@ -569,7 +628,7 @@ export async function bootstrapRemoteRuntime(context: vscode.ExtensionContext): 
       if (legacyWheelProbe.ok) {
         usedLegacyFallback = true;
         selectedCoreRequirements = legacyRequirements;
-        output.appendLine('Modern MDTraj wheel probe failed; using Python 3.9 legacy fallback package specs.');
+        output.appendLine(`Using Python 3.9 legacy fallback package specs: ${selectedCoreRequirements.join(' ')}`);
         const ok = await runAndHandleFailure({
           id: 'apply_legacy_bootstrap_constraints',
           command: venvPython,
