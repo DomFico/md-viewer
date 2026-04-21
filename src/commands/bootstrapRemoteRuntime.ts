@@ -695,10 +695,17 @@ export async function bootstrapRemoteRuntime(context: vscode.ExtensionContext): 
     });
   }
 
+  const installCoreArgs = usedLegacyFallback
+    ? ['-m', 'pip', 'install', '--only-binary=:all:', '--upgrade', ...selectedCoreRequirements, ...extraPipArgs]
+    : ['-m', 'pip', 'install', '--upgrade', ...selectedCoreRequirements, ...extraPipArgs];
+  if (usedLegacyFallback) {
+    output.appendLine('Using Python 3.9 legacy fallback package specs in wheel-only mode.');
+    output.appendLine('Legacy fallback install args include --only-binary=:all:.');
+  }
   const installCoreStep: BootstrapStep = {
     id: 'install_core_runtime',
     command: venvPython,
-    args: ['-m', 'pip', 'install', '--upgrade', ...selectedCoreRequirements, ...extraPipArgs],
+    args: installCoreArgs,
   };
   const installCoreOk = await runAndHandleFailure(installCoreStep, {
     attemptedSourceBuild: sourceBuildAllowedAfterProbe,
