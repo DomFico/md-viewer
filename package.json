@@ -3,7 +3,7 @@
   "publisher": "DominicFico",
   "displayName": "MD Viewer",
   "description": "General molecular dynamics dataset viewer",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "license": "MIT",
   "icon": "docs/assets/logo/for_vscode_marketplace.png",
   "galleryBanner": {
@@ -22,7 +22,23 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Other"
+    "Data Science",
+    "Visualization"
+  ],
+  "keywords": [
+    "protein",
+    "computational chemistry",
+    "biology",
+    "molecular dynamics",
+    "chemistry",
+    "AmberTools",
+    "Gromacs",
+    "pdb",
+    "bioinformatics",
+    "cheminformatics",
+    "molecule",
+    "3d",
+    "macromolecule"
   ],
   "activationEvents": [
     "onCommand:md-viewer.launch",
