@@ -104,6 +104,9 @@ export function getWebviewHtml(
             <div class="control-row control-row-buttons">
               <button id="btn-background" title="Toggle viewer background">Bg: Black</button>
             </div>
+            <div class="control-row control-row-buttons">
+              <button id="btn-change-settings" title="Reopen dataset setup and load options">Change Settings</button>
+            </div>
           </section>
         </div>
       </aside>

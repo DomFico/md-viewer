@@ -209,6 +209,106 @@ function parseEnvInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseEnvBool(name: string): boolean {
+  const raw = (process.env[name] || '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
+function parseEnvJsonObject(name: string): Record<string, unknown> | null {
+  const raw = process.env[name];
+  if (!raw || raw.trim().length === 0) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function resolveSelectionPresetValue(value: unknown, fallback: SelectionPreset): SelectionPreset {
+  return (
+    value === 'protein_only'
+    || value === 'protein_ligand'
+    || value === 'protein_ligand_ions'
+    || value === 'everything'
+  ) ? value : fallback;
+}
+
+function resolveSolventHandlingValue(value: unknown, fallback: SolventHandling): SolventHandling {
+  return (value === 'hide_common_solvent' || value === 'keep_all') ? value : fallback;
+}
+
+function buildReopenSettingsOptions(
+  dataset: { trajectoryPath: string; topologyPath?: string },
+  loadOptions: MdDatasetLoadOptions | undefined,
+  effectiveBehavior: { initialFrameOnly: boolean; frameStride: number },
+  initPayload: any,
+  overridesRaw: unknown
+): MdDatasetLoadOptions {
+  const defaults = createDefaultLoadOptions('with_options');
+  const displayFilter = (initPayload?.data?.displayFilter && typeof initPayload.data.displayFilter === 'object')
+    ? initPayload.data.displayFilter as Record<string, unknown>
+    : {};
+  const loadMode = loadOptions?.behavior?.loadMode ?? defaults.behavior.loadMode;
+  const baseOptions: MdDatasetLoadOptions = {
+    source: 'with_options',
+    resolution: {
+      trajectoryPathOverride: dataset.trajectoryPath,
+      topologyPathOverride: dataset.topologyPath ?? null,
+    },
+    behavior: withLoadModeDefaults(loadMode, {
+      initialFrameOnly: effectiveBehavior.initialFrameOnly,
+      frameStride: effectiveBehavior.frameStride,
+    }),
+    filtering: {
+      selectionPreset: resolveSelectionPresetValue(
+        loadOptions?.filtering?.selectionPreset ?? displayFilter.selectionPreset,
+        defaults.filtering.selectionPreset
+      ),
+      solventHandling: resolveSolventHandlingValue(
+        loadOptions?.filtering?.solventHandling ?? displayFilter.solventHandling,
+        defaults.filtering.solventHandling
+      ),
+    },
+  };
+
+  const overrides = (overridesRaw && typeof overridesRaw === 'object' && !Array.isArray(overridesRaw))
+    ? overridesRaw as Record<string, unknown>
+    : {};
+  const resolutionOverrides = (overrides.resolution && typeof overrides.resolution === 'object' && !Array.isArray(overrides.resolution))
+    ? overrides.resolution as Record<string, unknown>
+    : {};
+  const behaviorOverrides = (overrides.behavior && typeof overrides.behavior === 'object' && !Array.isArray(overrides.behavior))
+    ? overrides.behavior as Record<string, unknown>
+    : {};
+  const filteringOverrides = (overrides.filtering && typeof overrides.filtering === 'object' && !Array.isArray(overrides.filtering))
+    ? overrides.filtering as Record<string, unknown>
+    : {};
+
+  const mergedInput = {
+    source: 'with_options',
+    resolution: {
+      ...baseOptions.resolution,
+      ...resolutionOverrides,
+    },
+    behavior: {
+      ...baseOptions.behavior,
+      ...behaviorOverrides,
+    },
+    filtering: {
+      ...baseOptions.filtering,
+      ...filteringOverrides,
+    },
+  };
+
+  return normalizeOptionsFromInput(mergedInput, 'with_options');
+}
+
 type DependencyErrorGuidance = {
   dependencyIssue: boolean;
   userMessage: string;
@@ -1541,6 +1641,10 @@ export async function openMdViewer(
         uxProbeAutodrive: process.env.MD_VIEWER_UX_AUTODRIVE === '1',
         uxProbeDeselectCycles: parseEnvInt('MD_VIEWER_UX_DESELECT_CYCLES', 2),
         uxProbeResidueName: process.env.MD_VIEWER_UX_PROBE_RESIDUE_NAME || '',
+        reopenSettingsAutodrive: parseEnvBool('MD_VIEWER_REOPEN_SETTINGS_AUTODRIVE'),
+        reopenSettingsAutodriveDelayMs: parseEnvInt('MD_VIEWER_REOPEN_SETTINGS_AUTODRIVE_DELAY_MS', 900),
+        reopenSettingsAutodriveAutoConfirm: parseEnvBool('MD_VIEWER_REOPEN_SETTINGS_AUTODRIVE_AUTO_CONFIRM'),
+        reopenSettingsAutodriveOptions: parseEnvJsonObject('MD_VIEWER_REOPEN_SETTINGS_AUTODRIVE_OPTIONS_JSON'),
         dcdNcParityProbe: process.env.MD_VIEWER_DCD_NC_PARITY_PROBE === '1',
         loadOptions: loadOptions ? {
           source: loadOptions.source,
@@ -1559,6 +1663,60 @@ export async function openMdViewer(
             source: 'webview',
             ...message.payload,
           });
+          return;
+        }
+        if (message?.type === 'reopenSettings') {
+          const optionsOverrides = (message.optionsOverrides && typeof message.optionsOverrides === 'object' && !Array.isArray(message.optionsOverrides))
+            ? message.optionsOverrides as Record<string, unknown>
+            : undefined;
+          const autoConfirm = message.autoConfirm === true;
+          const reopenOptions = buildReopenSettingsOptions(
+            dataset,
+            loadOptions,
+            effectiveBehavior,
+            initPayload,
+            optionsOverrides
+          );
+          const commandInput = {
+            uri: vscode.Uri.file(dataset.trajectoryPath),
+            options: reopenOptions,
+            autoConfirm,
+          };
+          emitCheckpoint('CHK_REOPEN_3_SETTINGS_REOPEN_REQUESTED', {
+            source: message.source || 'webview',
+            clickedPath: targetUri.fsPath,
+            trajectoryPath: dataset.trajectoryPath,
+            topologyPath: dataset.topologyPath ?? null,
+            trajectoryExt,
+            topologyExt: topologyExt || null,
+            currentOptionsSource: loadOptions?.source ?? 'default',
+            overridesProvided: Boolean(optionsOverrides),
+            autoConfirm,
+            reopenOptions,
+          });
+          void vscode.commands.executeCommand('md-viewer.openDatasetWithOptions', commandInput).then(
+            () => {
+              emitCheckpoint('CHK_REOPEN_4_SETUP_PANEL_REOPEN_COMMAND_DISPATCHED', {
+                dispatched: true,
+                command: 'md-viewer.openDatasetWithOptions',
+                trajectoryPath: dataset.trajectoryPath,
+                topologyPath: dataset.topologyPath ?? null,
+                optionsSource: reopenOptions.source,
+                autoConfirm,
+              });
+            },
+            (err: unknown) => {
+              emitCheckpoint('CHK_REOPEN_4_SETUP_PANEL_REOPEN_COMMAND_DISPATCHED', {
+                dispatched: false,
+                command: 'md-viewer.openDatasetWithOptions',
+                trajectoryPath: dataset.trajectoryPath,
+                topologyPath: dataset.topologyPath ?? null,
+                optionsSource: reopenOptions.source,
+                autoConfirm,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          );
           return;
         }
         if (message?.type === 'trajectoryFrameChunkRequest') {

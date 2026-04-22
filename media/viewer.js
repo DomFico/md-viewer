@@ -301,6 +301,15 @@
       )
     );
     const uxProbeAutodrive = debugContext.uxProbeAutodrive === true;
+    const reopenSettingsAutodrive = debugContext.reopenSettingsAutodrive === true;
+    const reopenSettingsAutodriveDelayMs = Number.isFinite(Number(debugContext.reopenSettingsAutodriveDelayMs))
+      ? Math.max(0, Number(debugContext.reopenSettingsAutodriveDelayMs))
+      : 900;
+    const reopenSettingsAutodriveOptions =
+      debugContext.reopenSettingsAutodriveOptions && typeof debugContext.reopenSettingsAutodriveOptions === 'object'
+        ? debugContext.reopenSettingsAutodriveOptions
+        : null;
+    const reopenSettingsAutodriveAutoConfirm = debugContext.reopenSettingsAutodriveAutoConfirm === true;
     const referenceHarnessRaw = debugContext.referenceHarness || {};
     const referenceHarnessEnabled = referenceHarnessRaw.enabled === true;
     const referenceHarness = {
@@ -574,6 +583,7 @@
     const app = document.getElementById('app');
     const slider = document.getElementById('slider');
     const btnBackground = document.getElementById('btn-background');
+    const btnChangeSettings = document.getElementById('btn-change-settings');
     const btnSeqMode = document.getElementById('btn-seq-mode');
     const btnSequenceToggle = document.getElementById('btn-sequence-toggle');
     const btnPanelToggle = document.getElementById('btn-panel-toggle');
@@ -585,6 +595,14 @@
     const sequenceSelection = document.getElementById('sequence-selection');
     const localRadiusSlider = document.getElementById('local-radius-slider');
     const localRadiusValue = document.getElementById('local-radius-value');
+
+    sendWebviewCheckpoint('CHK_REOPEN_1_CONTROL_RENDERED', {
+      controlPresent: Boolean(btnChangeSettings),
+      source: 'viewer_init',
+      trajectoryPath: debugContext.trajectoryPath || null,
+      topologyPath: debugContext.topologyPath || null,
+      loadOptionsSource: debugContext && debugContext.loadOptions ? debugContext.loadOptions.source || null : null,
+    });
 
     function persistUiState() {
       if (!vscode || typeof vscode.setState !== 'function') return;
@@ -3532,6 +3550,26 @@
       applyViewerTheme();
       renderScene();
     });
+    if (btnChangeSettings) {
+      btnChangeSettings.addEventListener('click', () => {
+        const hasOverrides = Boolean(reopenSettingsAutodriveOptions);
+        sendWebviewCheckpoint('CHK_REOPEN_2_BUTTON_CLICKED', {
+          source: 'viewer_button',
+          hasOverrides,
+          autoConfirm: reopenSettingsAutodriveAutoConfirm,
+          trajectoryPath: debugContext.trajectoryPath || null,
+          topologyPath: debugContext.topologyPath || null,
+        });
+        if (vscode) {
+          vscode.postMessage({
+            type: 'reopenSettings',
+            source: 'viewer_button',
+            optionsOverrides: hasOverrides ? reopenSettingsAutodriveOptions : undefined,
+            autoConfirm: reopenSettingsAutodriveAutoConfirm,
+          });
+        }
+      });
+    }
     btnSeqMode.addEventListener('click', () => {
       sequenceMode = sequenceMode === 'three' ? 'one' : 'three';
       applySequenceMode();
@@ -4008,6 +4046,22 @@
           setFrame(totalFrameCount - 1);
         }, 2200);
       }
+    }
+    if (
+      reopenSettingsAutodrive
+      && btnChangeSettings
+      && (!debugContext.loadOptions || debugContext.loadOptions.source !== 'with_options')
+    ) {
+      window.setTimeout(() => {
+        sendWebviewCheckpoint('CHK_REOPEN_2_BUTTON_CLICKED', {
+          source: 'autodrive',
+          hasOverrides: Boolean(reopenSettingsAutodriveOptions),
+          autoConfirm: reopenSettingsAutodriveAutoConfirm,
+          trajectoryPath: debugContext.trajectoryPath || null,
+          topologyPath: debugContext.topologyPath || null,
+        });
+        btnChangeSettings.click();
+      }, reopenSettingsAutodriveDelayMs);
     }
     requestAnimationFrame(animate);
     if (referenceHarness.enabled || dcdNcParityProbeEnabled) {
