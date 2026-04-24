@@ -5,6 +5,9 @@ import * as vscode from 'vscode';
 import {
   Dataset,
   DatasetResolver,
+  COORDINATE_ONLY_TRAJECTORY_EXTS,
+  SELF_CONTAINED_STRUCTURE_EXTS,
+  TOPOLOGY_ONLY_EXTS,
   TRAJECTORY_EXTS,
   TOPOLOGY_EXTS,
 } from '../parsing/DatasetResolver';
@@ -24,10 +27,10 @@ import { RUNTIME_BRIDGE_SCRIPTS, resolveRuntimeBridgePath } from '../runtime/bri
 import { preferredPythonExecutable } from '../runtime/pythonRuntime';
 
 const DATASET_FILE_FILTERS = ['xyz', 'xtc', 'trr', 'dcd', 'nc', 'rst7', 'inpcrd', 'mdcrd', 'pdb', 'gro', 'parm7', 'prmtop'];
-const SUPPORTED_TRAJECTORY_PARSE_EXTS = new Set(['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd', '.pdb']);
+const SUPPORTED_TRAJECTORY_PARSE_EXTS = new Set(['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd', '.pdb', '.gro']);
 const SUPPORTED_TOPOLOGY_PARSE_EXTS = new Set(['.pdb', '.gro', '.parm7', '.prmtop']);
 const BINARY_METADATA_EXTS = new Set(['.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd']);
-const TRAJECTORY_REQUIRES_TOPOLOGY_EXTS = new Set(['.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd']);
+const TRAJECTORY_REQUIRES_TOPOLOGY_EXTS = new Set(COORDINATE_ONLY_TRAJECTORY_EXTS);
 
 interface SetupPanelCandidate {
   label: string;
@@ -227,6 +230,18 @@ function countPdbAtoms(filePath: string): number | null {
   }
 }
 
+function countGroAtoms(filePath: string): number | null {
+  try {
+    const text = fs.readFileSync(filePath, 'utf8');
+    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    if (lines.length < 2) return null;
+    const parsed = parseInt(lines[1].trim(), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 async function probeBinaryMetadata(
   trajectoryPath: string,
   topologyPath: string,
@@ -288,6 +303,9 @@ async function inferKnownCounts(
   if (trajectoryExt === '.pdb') {
     return { atomCount: countPdbAtoms(trajectoryPath), frameCount: 1 };
   }
+  if (trajectoryExt === '.gro') {
+    return { atomCount: countGroAtoms(trajectoryPath), frameCount: 1 };
+  }
 
   if (topologyPath && BINARY_METADATA_EXTS.has(trajectoryExt)) {
     return probeBinaryMetadata(trajectoryPath, topologyPath, trajectoryExt);
@@ -329,7 +347,14 @@ async function buildValidation(
   const topologyExt = topologyPath ? path.extname(topologyPath).toLowerCase() : null;
 
   if (!TRAJECTORY_EXTS.includes(trajectoryExt)) {
-    messages.push({ level: 'error', message: `Trajectory format ${trajectoryExt || '(none)'} is not recognized.` });
+    if (TOPOLOGY_ONLY_EXTS.includes(trajectoryExt)) {
+      messages.push({
+        level: 'error',
+        message: `${trajectoryExt} is topology-only and cannot be loaded alone. Select companion coordinates (.rst7/.inpcrd/.nc/.mdcrd/.xtc/.trr/.dcd as appropriate).`,
+      });
+    } else {
+      messages.push({ level: 'error', message: `Trajectory format ${trajectoryExt || '(none)'} is not recognized.` });
+    }
     blocking = true;
   } else if (!SUPPORTED_TRAJECTORY_PARSE_EXTS.has(trajectoryExt)) {
     messages.push({
@@ -344,7 +369,13 @@ async function buildValidation(
       messages.push({ level: 'error', message: `Topology file does not exist: ${topologyPath}` });
       blocking = true;
     }
-    if (!TOPOLOGY_EXTS.includes(topologyExt ?? '')) {
+    if (COORDINATE_ONLY_TRAJECTORY_EXTS.includes(topologyExt ?? '')) {
+      messages.push({
+        level: 'error',
+        message: `Selected topology format ${topologyExt} is coordinate-only. Choose a topology source (.pdb/.gro/.parm7/.prmtop).`,
+      });
+      blocking = true;
+    } else if (!TOPOLOGY_EXTS.includes(topologyExt ?? '')) {
       messages.push({ level: 'warning', message: `Topology format ${topologyExt || '(none)'} is not recognized.` });
     } else if (!SUPPORTED_TOPOLOGY_PARSE_EXTS.has(topologyExt ?? '')) {
       messages.push({
@@ -354,10 +385,15 @@ async function buildValidation(
       blocking = true;
     }
   } else {
-    if (TRAJECTORY_REQUIRES_TOPOLOGY_EXTS.has(trajectoryExt)) {
+    if (SELF_CONTAINED_STRUCTURE_EXTS.includes(trajectoryExt)) {
+      messages.push({
+        level: 'info',
+        message: `Using self-contained static structure mode: ${trajectoryExt} provides both topology and coordinates as a single-frame view.`,
+      });
+    } else if (TRAJECTORY_REQUIRES_TOPOLOGY_EXTS.has(trajectoryExt)) {
       messages.push({
         level: 'error',
-        message: `Trajectory format ${trajectoryExt} requires a companion topology (recommended: .parm7/.prmtop/.pdb/.gro depending on source).`,
+        message: `Coordinate format ${trajectoryExt} requires a companion topology (.parm7/.prmtop/.pdb/.gro depending on source).`,
       });
       blocking = true;
     } else {
@@ -664,6 +700,23 @@ export async function openMdDatasetSetupPanel(
   });
 
   const confirmAndLoad = async (): Promise<void> => {
+    const selectedTrajectoryPath = state.options.resolution.trajectoryPathOverride;
+    const selectedTrajectoryExt = selectedTrajectoryPath ? path.extname(selectedTrajectoryPath).toLowerCase() : '';
+    if (
+      selectedTrajectoryPath &&
+      !state.options.resolution.topologyPathOverride &&
+      SELF_CONTAINED_STRUCTURE_EXTS.includes(selectedTrajectoryExt)
+    ) {
+      state.options.resolution.topologyPathOverride = selectedTrajectoryPath;
+      emitCheckpoint('CHK_SETUP_5_TOPOLOGY_OVERRIDE_SELECTED', {
+        selectedTopologyPath: state.options.resolution.topologyPathOverride,
+        defaultTopologyPath: state.defaults.topologyPath,
+        overrideChanged: (state.options.resolution.topologyPathOverride ?? null) !== (state.defaults.topologyPath ?? null),
+        source: 'autoSelfContainedStatic',
+      });
+      await recalcState(state, clickedDir);
+    }
+
     if (state.validation.blocking) {
       await panel.webview.postMessage({
         type: 'setupPanelError',

@@ -1762,7 +1762,7 @@
       if (selectedResidueId === null || !residueEntries[selectedResidueId]) {
         sequenceSelection.textContent = hasTopology
           ? 'Click a residue to focus the view'
-          : 'Sequence navigation becomes available when a matching sidecar PDB is present';
+          : 'Sequence navigation becomes available when topology metadata is available (self-contained .pdb/.gro or a companion topology file).';
         return;
       }
       sequenceSelection.textContent = `Focused ${residueDescriptorCompact(residueEntries[selectedResidueId])}`;
@@ -2694,7 +2694,7 @@
           caIndicesLength: caIndices.length,
           disableReason: !hasTopology ? 'hasTopology=false' : (visibleResidueCount === 0 ? 'visibleResidueCount===0' : 'none'),
           warningTextShown: residueNavDisabled
-            ? 'Residue navigation requires a matching sidecar PDB with chain and residue metadata.'
+            ? 'Residue navigation requires topology metadata (.pdb/.gro self-contained, or a companion topology file such as .pdb/.gro/.parm7/.prmtop).'
             : null,
         });
       }
@@ -2712,7 +2712,7 @@
         }
         const empty = document.createElement('div');
         empty.className = 'sequence-empty';
-        empty.textContent = 'Residue navigation requires a matching sidecar PDB with chain and residue metadata.';
+        empty.textContent = 'Residue navigation requires topology metadata (.pdb/.gro self-contained, or a companion topology file such as .pdb/.gro/.parm7/.prmtop).';
         sequenceContent.appendChild(empty);
         btnSeqMode.disabled = true;
         updateSequenceSelectionText();

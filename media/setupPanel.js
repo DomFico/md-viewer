@@ -93,7 +93,7 @@
     setOptions(el.trajectorySelect, trajectoryOptions, options.resolution?.trajectoryPathOverride || summary.trajectoryPath);
 
     const topologyOptions = [
-      { value: '__none__', label: 'None (Trajectory Only)', description: 'No companion topology' },
+      { value: '__none__', label: 'None (No Companion Topology)', description: 'No companion topology file selected' },
       ...(state.candidates?.topology || []).map((candidate) => ({
         value: candidate.path,
         label: candidate.recommended ? `${candidate.label} (Recommended)` : candidate.label,

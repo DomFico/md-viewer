@@ -8,6 +8,7 @@ import { XtcParser, DcdParser, TrrParser, NcParser, Rst7Parser, InpcrdParser, Md
 import { PdbParser } from '../parsing/pdb';
 import { GroParser } from '../parsing/gro';
 import { Parm7Parser } from '../parsing/parm7';
+import { PdbStaticParser, GroStaticParser } from '../parsing/staticStructure';
 import { getWebviewHtml } from '../webview/getHtml';
 import { logDebug } from '../logger';
 import { DatasetNormalizer } from '../normalization/DatasetNormalizer';
@@ -27,6 +28,8 @@ import {
 
 const trajectoryParsers: ITrajectoryParser[] = [
   new XyzParser(),
+  new PdbStaticParser(),
+  new GroStaticParser(),
   new XtcParser(),
   new DcdParser(),
   new TrrParser(),
@@ -697,7 +700,7 @@ type DatasetQuickPickItem = vscode.QuickPickItem & {
   solventHandling?: SolventHandling;
 };
 
-const TRAJECTORY_FILE_EXTS = ['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd', '.pdb'];
+const TRAJECTORY_FILE_EXTS = ['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd', '.pdb', '.gro'];
 const TOPOLOGY_FILE_EXTS = ['.pdb', '.gro', '.parm7', '.prmtop'];
 const DATASET_FILE_FILTERS = ['xyz', 'xtc', 'trr', 'dcd', 'nc', 'rst7', 'inpcrd', 'mdcrd', 'pdb', 'gro', 'parm7', 'prmtop'];
 

@@ -23,7 +23,11 @@ export interface DatasetResolutionInspection {
   topologyCandidates: string[];
 }
 
-export const TRAJECTORY_EXTS = ['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd', '.pdb'];
+export const SELF_CONTAINED_STRUCTURE_EXTS = ['.pdb', '.gro'];
+export const TOPOLOGY_ONLY_EXTS = ['.parm7', '.prmtop'];
+export const COORDINATE_ONLY_TRAJECTORY_EXTS = ['.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd'];
+
+export const TRAJECTORY_EXTS = ['.xyz', '.xtc', '.trr', '.dcd', '.nc', '.rst7', '.inpcrd', '.mdcrd', '.pdb', '.gro'];
 export const TOPOLOGY_EXTS = ['.pdb', '.gro', '.parm7', '.prmtop'];
 
 const TOPOLOGY_PREFERENCE_BY_TRAJECTORY: Record<string, string[]> = {
@@ -226,6 +230,18 @@ export class DatasetResolver {
     return TOPOLOGY_EXTS.includes(ext.toLowerCase());
   }
 
+  public static isSelfContainedStructureExt(ext: string): boolean {
+    return SELF_CONTAINED_STRUCTURE_EXTS.includes(ext.toLowerCase());
+  }
+
+  public static isTopologyOnlyExt(ext: string): boolean {
+    return TOPOLOGY_ONLY_EXTS.includes(ext.toLowerCase());
+  }
+
+  public static isCoordinateOnlyTrajectoryExt(ext: string): boolean {
+    return COORDINATE_ONLY_TRAJECTORY_EXTS.includes(ext.toLowerCase());
+  }
+
   public static async inspect(uri: vscode.Uri): Promise<DatasetResolutionInspection> {
     const clickedPath = uri.fsPath;
     const clickedExt = path.extname(clickedPath).toLowerCase();
@@ -281,63 +297,91 @@ export class DatasetResolver {
     const preferredTopologyExt = normalizeExt(process.env.MD_VIEWER_PREFERRED_TOPOLOGY_EXT);
 
     if (DatasetResolver.isTopologyExt(ext) || ext === '.tpr') {
-      const siblingTrajs = uniqueFiles.filter((candidate) => {
-        const candidateExt = path.extname(candidate).toLowerCase();
-        return TRAJECTORY_EXTS.includes(candidateExt) && candidate !== fileName;
-      });
-
-      logDebug('DatasetResolver', 'Found trajectory candidates for topology', { candidates: siblingTrajs });
-
-      if (siblingTrajs.length === 1) {
-        trajectoryPath = path.join(dir, siblingTrajs[0]);
-        topologyPath = fsPath;
-      } else if (siblingTrajs.length > 1) {
-        const preferredTrajectory = choosePreferredCandidate(siblingTrajs, preferredTrajectoryFile, preferredTrajectoryExt);
-        const rankedTrajectory = chooseRankedCandidate(siblingTrajs, {
-          anchorFile: fileName,
-          preferredExtOrder: TRAJECTORY_PREFERENCE_BY_TOPOLOGY[ext] ?? ['.nc', '.mdcrd', '.rst7', '.inpcrd', '.xtc', '.trr', '.dcd', '.xyz', '.pdb'],
-        }) ?? chooseByTrajectoryPreference(siblingTrajs, ext);
-
-        const recommendedTrajectory = preferredTrajectory ?? rankedTrajectory;
+      if (DatasetResolver.isSelfContainedStructureExt(ext)) {
+        const siblingTrajs = uniqueFiles.filter((candidate) => {
+          const candidateExt = path.extname(candidate).toLowerCase();
+          return TRAJECTORY_EXTS.includes(candidateExt) && candidate !== fileName;
+        });
+        const preferredTrajectory = choosePreferredCandidate(
+          siblingTrajs,
+          preferredTrajectoryFile,
+          preferredTrajectoryExt
+        );
 
         if (preferredTrajectory) {
           trajectoryPath = path.join(dir, preferredTrajectory);
           topologyPath = fsPath;
-          logDebug('DatasetResolver', 'Selected preferred trajectory candidate', {
+          logDebug('DatasetResolver', 'Selected preferred companion trajectory for self-contained structure file', {
+            clickedPath: fsPath,
             preferredTrajectory,
             preferredTrajectoryFile,
             preferredTrajectoryExt,
           });
-          return {
-            trajectoryPath,
-            topologyPath,
-            datasetName: path.basename(trajectoryPath),
-          };
-        }
-
-        if (interactive) {
-          const sortedTrajs = sortCandidatesByScore(
-            siblingTrajs,
-            fileName,
-            TRAJECTORY_PREFERENCE_BY_TOPOLOGY[ext] ?? []
-          );
-          const picked = await vscode.window.showQuickPick(
-            sortedTrajs.map((candidate) => ({
-              label: recommendedTrajectory && candidate === recommendedTrajectory ? `${candidate} (Recommended)` : candidate,
-              detail: path.join(dir, candidate),
-            })),
-            { placeHolder: `Select companion trajectory for ${fileName}` }
-          );
-          if (!picked) return undefined;
-          trajectoryPath = picked.detail ?? path.join(dir, picked.label);
-          topologyPath = fsPath;
         } else {
-          const autoPicked = recommendedTrajectory ?? siblingTrajs.slice().sort((a, b) => a.localeCompare(b))[0];
-          trajectoryPath = path.join(dir, autoPicked);
+          trajectoryPath = fsPath;
           topologyPath = fsPath;
+          logDebug('DatasetResolver', 'Using self-contained static default for structure file', {
+            clickedPath: fsPath,
+            ext,
+          });
         }
       } else {
-        trajectoryPath = fsPath;
+        const siblingTrajs = uniqueFiles.filter((candidate) => {
+          const candidateExt = path.extname(candidate).toLowerCase();
+          return TRAJECTORY_EXTS.includes(candidateExt) && candidate !== fileName;
+        });
+
+        logDebug('DatasetResolver', 'Found trajectory candidates for topology', { candidates: siblingTrajs });
+
+        if (siblingTrajs.length === 1) {
+          trajectoryPath = path.join(dir, siblingTrajs[0]);
+          topologyPath = fsPath;
+        } else if (siblingTrajs.length > 1) {
+          const preferredTrajectory = choosePreferredCandidate(siblingTrajs, preferredTrajectoryFile, preferredTrajectoryExt);
+          const rankedTrajectory = chooseRankedCandidate(siblingTrajs, {
+            anchorFile: fileName,
+            preferredExtOrder: TRAJECTORY_PREFERENCE_BY_TOPOLOGY[ext] ?? ['.nc', '.mdcrd', '.rst7', '.inpcrd', '.xtc', '.trr', '.dcd', '.xyz', '.pdb'],
+          }) ?? chooseByTrajectoryPreference(siblingTrajs, ext);
+
+          const recommendedTrajectory = preferredTrajectory ?? rankedTrajectory;
+
+          if (preferredTrajectory) {
+            trajectoryPath = path.join(dir, preferredTrajectory);
+            topologyPath = fsPath;
+            logDebug('DatasetResolver', 'Selected preferred trajectory candidate', {
+              preferredTrajectory,
+              preferredTrajectoryFile,
+              preferredTrajectoryExt,
+            });
+            return {
+              trajectoryPath,
+              topologyPath,
+              datasetName: path.basename(trajectoryPath),
+            };
+          }
+
+          if (interactive) {
+            const sortedTrajs = sortCandidatesByScore(
+              siblingTrajs,
+              fileName,
+              TRAJECTORY_PREFERENCE_BY_TOPOLOGY[ext] ?? []
+            );
+            const picked = await vscode.window.showQuickPick(
+              sortedTrajs.map((candidate) => ({
+                label: recommendedTrajectory && candidate === recommendedTrajectory ? `${candidate} (Recommended)` : candidate,
+                detail: path.join(dir, candidate),
+              })),
+              { placeHolder: `Select companion trajectory for ${fileName}` }
+            );
+            if (!picked) return undefined;
+            trajectoryPath = picked.detail ?? path.join(dir, picked.label);
+            topologyPath = fsPath;
+          } else {
+            const autoPicked = recommendedTrajectory ?? siblingTrajs.slice().sort((a, b) => a.localeCompare(b))[0];
+            trajectoryPath = path.join(dir, autoPicked);
+            topologyPath = fsPath;
+          }
+        }
       }
     } else {
       const siblingTops = uniqueFiles.filter((candidate) => {
