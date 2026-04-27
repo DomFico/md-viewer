@@ -103,19 +103,15 @@ export function getSetupPanelHtml(
       <h2>C. Load Behavior</h2>
       <div class="grid-two">
         <label>
-          <span>Load Mode</span>
-          <select id="load-mode">
-            <option value="fast_preview">Fast preview</option>
-            <option value="standard">Standard</option>
-            <option value="fuller_initial">Fuller initial load</option>
-          </select>
+          <span>Frames Per Load (or All)</span>
+          <input id="frames-per-load" type="text" inputmode="numeric" value="25" />
         </label>
         <label>
           <span>Frame Stride (Sample Every Nth Frame)</span>
           <input id="frame-stride" type="number" min="1" step="1" />
         </label>
       </div>
-      <p class="hint">Stride applies to both initial load and streamed chunk requests.</p>
+      <p class="hint">For chunked trajectories, this controls initial and follow-up frame chunk size. Use <code>All</code> to load all sampled frames at once.</p>
     </section>
 
     <section class="card" id="section-filtering">

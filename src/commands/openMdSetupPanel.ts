@@ -15,8 +15,6 @@ import {
   MdDatasetLoadOptions,
   createDefaultLoadOptions,
   normalizeOptionsFromInput,
-  withLoadModeDefaults,
-  DatasetLoadMode,
   SelectionPreset,
   SolventHandling,
 } from '../options/LoadOptions';
@@ -421,7 +419,7 @@ async function buildValidation(
   if (counts.frameCount !== null && counts.frameCount > 5000) {
     messages.push({
       level: 'info',
-      message: `Large trajectory detected (${counts.frameCount} frames). Fast preview is recommended.`,
+      message: `Large trajectory detected (${counts.frameCount} frames). A smaller Frames Per Load value (for example 25) is recommended.`,
     });
   }
   if (counts.atomCount !== null && counts.atomCount > 120000) {
@@ -509,9 +507,20 @@ function sanitizeFrameStride(value: unknown, fallback: number): number {
   return rounded > 0 ? rounded : fallback;
 }
 
-function ensureLoadMode(value: unknown, fallback: DatasetLoadMode): DatasetLoadMode {
-  if (value === 'fast_preview' || value === 'standard' || value === 'fuller_initial') {
-    return value;
+function sanitizeFramesPerLoad(value: unknown, fallback: number | 'all'): number | 'all' {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.toLowerCase() === 'all') {
+      return 'all';
+    }
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.floor(parsed);
+    }
+    return fallback;
+  }
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
   }
   return fallback;
 }
@@ -840,14 +849,12 @@ export async function openMdDatasetSetupPanel(
 
     if (message.type === 'setupPanelUpdateBehavior') {
       const current = state.options.behavior;
-      const nextLoadMode = ensureLoadMode(message.loadMode, current.loadMode);
-      const modeDefaults = withLoadModeDefaults(nextLoadMode, {
-        initialFrameOnly: current.initialFrameOnly,
-        frameStride: current.frameStride,
-      });
       state.options.behavior = {
-        ...modeDefaults,
-        frameStride: sanitizeFrameStride(message.frameStride ?? modeDefaults.frameStride, modeDefaults.frameStride),
+        ...current,
+        loadMode: 'standard',
+        initialFrameOnly: false,
+        frameStride: sanitizeFrameStride(message.frameStride ?? current.frameStride, current.frameStride),
+        framesPerLoad: sanitizeFramesPerLoad(message.framesPerLoad ?? current.framesPerLoad, current.framesPerLoad),
       };
       await recalcState(state, clickedDir);
       await postSetupState(panel, state);

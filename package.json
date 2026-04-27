@@ -3,7 +3,7 @@
   "publisher": "DominicFico",
   "displayName": "MD Viewer",
   "description": "General molecular dynamics dataset viewer",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "license": "MIT",
   "icon": "docs/assets/logo/for_vscode_marketplace.png",
   "galleryBanner": {

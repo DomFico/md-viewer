@@ -1,6 +1,7 @@
 import * as path from 'path';
 
 export type DatasetLoadMode = 'fast_preview' | 'standard' | 'fuller_initial';
+export type FramesPerLoad = number | 'all';
 export type SelectionPreset =
   | 'protein_only'
   | 'protein_ligand'
@@ -17,6 +18,7 @@ export interface DatasetLoadBehaviorOptions {
   loadMode: DatasetLoadMode;
   initialFrameOnly?: boolean;
   frameStride: number;
+  framesPerLoad: FramesPerLoad;
 }
 
 export interface DatasetFilteringOptions {
@@ -34,19 +36,23 @@ export interface MdDatasetLoadOptions {
 export interface EffectiveLoadBehavior {
   initialFrameOnly: boolean;
   frameStride: number;
+  framesPerLoad: FramesPerLoad;
 }
 
-const MODE_DEFAULTS: Record<DatasetLoadMode, { initialFrameOnly?: boolean; frameStride: number }> = {
+const MODE_DEFAULTS: Record<DatasetLoadMode, { initialFrameOnly?: boolean; frameStride: number; framesPerLoad: FramesPerLoad }> = {
   fast_preview: {
     initialFrameOnly: true,
     frameStride: 4,
+    framesPerLoad: 1,
   },
   standard: {
     frameStride: 1,
+    framesPerLoad: 25,
   },
   fuller_initial: {
     initialFrameOnly: false,
     frameStride: 1,
+    framesPerLoad: 100,
   },
 };
 
@@ -58,6 +64,7 @@ export function createDefaultLoadOptions(source: MdDatasetLoadOptions['source'] 
       loadMode: 'standard',
       frameStride: MODE_DEFAULTS.standard.frameStride,
       initialFrameOnly: MODE_DEFAULTS.standard.initialFrameOnly,
+      framesPerLoad: MODE_DEFAULTS.standard.framesPerLoad,
     },
     filtering: {
       selectionPreset: 'everything',
@@ -75,6 +82,7 @@ export function withLoadModeDefaults(
     loadMode,
     initialFrameOnly: overrides.initialFrameOnly ?? defaults.initialFrameOnly,
     frameStride: sanitizePositiveInt(overrides.frameStride, defaults.frameStride),
+    framesPerLoad: sanitizeFramesPerLoad(overrides.framesPerLoad, defaults.framesPerLoad),
   };
 }
 
@@ -83,9 +91,12 @@ export function computeEffectiveLoadBehavior(
   fallbackInitialFrameOnly: boolean
 ): EffectiveLoadBehavior {
   const behavior = options?.behavior;
+  const effectiveInitialFrameOnly = behavior?.initialFrameOnly ?? fallbackInitialFrameOnly;
+  const fallbackFramesPerLoad: FramesPerLoad = effectiveInitialFrameOnly ? 1 : MODE_DEFAULTS.standard.framesPerLoad;
   return {
-    initialFrameOnly: behavior?.initialFrameOnly ?? fallbackInitialFrameOnly,
+    initialFrameOnly: effectiveInitialFrameOnly,
     frameStride: sanitizePositiveInt(behavior?.frameStride, 1),
+    framesPerLoad: sanitizeFramesPerLoad(behavior?.framesPerLoad, fallbackFramesPerLoad),
   };
 }
 
@@ -107,6 +118,7 @@ export function normalizeOptionsFromInput(
   const behavior = withLoadModeDefaults(loadMode, {
     initialFrameOnly: parseOptionalBoolean(behaviorRaw.initialFrameOnly),
     frameStride: parseOptionalNumber(behaviorRaw.frameStride),
+    framesPerLoad: parseOptionalFramesPerLoad(behaviorRaw.framesPerLoad),
   });
 
   const selectionPreset = parseSelectionPreset(filteringRaw.selectionPreset) ?? fallback.filtering.selectionPreset;
@@ -167,6 +179,24 @@ function parseOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function parseOptionalFramesPerLoad(value: unknown): FramesPerLoad | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return undefined;
+    if (trimmed.toLowerCase() === 'all') return 'all';
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.floor(parsed);
+    }
+    return undefined;
+  }
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return undefined;
+}
+
 function parsePathOverride(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -185,4 +215,20 @@ function sanitizePositiveInt(value: unknown, fallback: number): number {
   if (!Number.isFinite(parsed)) return fallback;
   const rounded = Math.floor(parsed);
   return rounded > 0 ? rounded : fallback;
+}
+
+function sanitizeFramesPerLoad(value: unknown, fallback: FramesPerLoad): FramesPerLoad {
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === 'all') return 'all';
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.floor(parsed);
+    }
+    return fallback;
+  }
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return fallback;
 }

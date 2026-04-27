@@ -104,8 +104,12 @@ export function getWebviewHtml(
             <div class="control-row control-row-buttons">
               <button id="btn-background" title="Toggle viewer background">Bg: Black</button>
             </div>
+          </section>
+          <section class="panel-section">
+            <h2 class="panel-heading">Tools</h2>
             <div class="control-row control-row-buttons">
               <button id="btn-change-settings" title="Reopen dataset setup and load options">Change Settings</button>
+              <button id="btn-save-current-frame" title="Save the currently displayed frame as .pdb, .gro, or .xyz">Save Current Frame</button>
             </div>
           </section>
         </div>

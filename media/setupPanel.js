@@ -12,7 +12,7 @@
     summaryFrameCount: document.getElementById('summary-frame-count'),
     trajectorySelect: document.getElementById('trajectory-select'),
     topologySelect: document.getElementById('topology-select'),
-    loadMode: document.getElementById('load-mode'),
+    framesPerLoad: document.getElementById('frames-per-load'),
     frameStride: document.getElementById('frame-stride'),
     selectionPreset: document.getElementById('selection-preset'),
     solventHandling: document.getElementById('solvent-handling'),
@@ -26,6 +26,17 @@
   };
 
   let latestState = null;
+
+  function parseFramesPerLoadInput(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return null;
+    if (text.toLowerCase() === 'all') return 'all';
+    const parsed = Number.parseInt(text, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+    return null;
+  }
 
   function post(type, payload) {
     vscode.postMessage({ type, ...payload });
@@ -105,7 +116,10 @@
       : (options.resolution?.topologyPathOverride || summary.topologyPath || '__none__');
     setOptions(el.topologySelect, topologyOptions, selectedTopology);
 
-    el.loadMode.value = behavior.loadMode || 'standard';
+    const framesPerLoadValue = behavior.framesPerLoad;
+    el.framesPerLoad.value = framesPerLoadValue === 'all'
+      ? 'All'
+      : String(Number.isFinite(Number(framesPerLoadValue)) && Number(framesPerLoadValue) > 0 ? Number(framesPerLoadValue) : 25);
     el.frameStride.value = String(behavior.frameStride || 1);
     el.selectionPreset.value = filtering.selectionPreset || 'everything';
     el.solventHandling.value = filtering.solventHandling || 'keep_all';
@@ -135,8 +149,15 @@
     post('setupPanelSelectTopology', { topologyPath: null });
   });
 
-  el.loadMode.addEventListener('change', () => {
-    post('setupPanelUpdateBehavior', { loadMode: el.loadMode.value });
+  el.framesPerLoad.addEventListener('change', () => {
+    const parsed = parseFramesPerLoadInput(el.framesPerLoad.value);
+    if (parsed === null) {
+      const fallback = latestState?.options?.behavior?.framesPerLoad;
+      el.framesPerLoad.value = fallback === 'all' ? 'All' : String(fallback || 25);
+      return;
+    }
+    el.framesPerLoad.value = parsed === 'all' ? 'All' : String(parsed);
+    post('setupPanelUpdateBehavior', { framesPerLoad: parsed });
   });
 
   el.frameStride.addEventListener('change', () => {

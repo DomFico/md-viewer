@@ -233,6 +233,337 @@ function parseEnvJsonObject(name: string): Record<string, unknown> | null {
   }
 }
 
+function parseEnvJsonArray(name: string): unknown[] | null {
+  const raw = process.env[name];
+  if (!raw || raw.trim().length === 0) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+type ExportFrameFormat = 'pdb' | 'gro' | 'xyz';
+
+type FrameExportAtom = {
+  index: number;
+  name: string;
+  element: string;
+  residueName: string;
+  residueSeq: number;
+  chainId: string;
+  insertionCode: string;
+  isHetero: boolean;
+};
+
+function normalizeExportFormat(extOrFormat: string, fallback: ExportFrameFormat): ExportFrameFormat {
+  const normalized = String(extOrFormat || '').trim().toLowerCase().replace(/^\./, '');
+  if (normalized === 'pdb' || normalized === 'gro' || normalized === 'xyz') {
+    return normalized;
+  }
+  return fallback;
+}
+
+function padLeft(value: string, width: number): string {
+  if (value.length >= width) return value.slice(-width);
+  return `${' '.repeat(width - value.length)}${value}`;
+}
+
+function padRight(value: string, width: number): string {
+  if (value.length >= width) return value.slice(0, width);
+  return `${value}${' '.repeat(width - value.length)}`;
+}
+
+function normalizeElementSymbol(value: unknown): string {
+  const text = String(value || '').trim();
+  if (!text) return 'C';
+  if (text.length === 1) return text.toUpperCase();
+  return `${text.charAt(0).toUpperCase()}${text.slice(1).toLowerCase()}`.slice(0, 2);
+}
+
+function normalizeChainId(value: unknown): string {
+  const text = String(value || '').trim();
+  if (!text) return 'A';
+  return text.charAt(0).toUpperCase();
+}
+
+function normalizePdbInsertionCode(value: unknown): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const ch = text.charAt(0);
+  return /^[A-Za-z0-9]$/.test(ch) ? ch : '';
+}
+
+const PDB_CHAIN_ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+const PDB_INSERTION_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+const SOLVENT_RESIDUE_ALIASES = new Set([
+  'HOH',
+  'WAT',
+  'SOL',
+  'H2O',
+  'TIP',
+  'TIP3',
+  'TIP3P',
+  'TIP4',
+  'TIP4P',
+  'SPC',
+  'SPCE',
+]);
+
+function normalizeResidueName(value: unknown): string {
+  const text = String(value || '').trim();
+  return (text || 'UNK').toUpperCase();
+}
+
+function canonicalResidueNameForFormat(residueName: string, format: ExportFrameFormat): string {
+  const normalized = normalizeResidueName(residueName);
+  if (SOLVENT_RESIDUE_ALIASES.has(normalized)) {
+    if (format === 'pdb') return 'WAT';
+    if (format === 'gro') return 'SOL';
+  }
+  if (format === 'gro') return normalized.slice(0, 5);
+  return normalized.slice(0, 3);
+}
+
+function normalizeAtomName(value: unknown, fallbackElement: string, index: number): string {
+  const text = String(value || '').trim();
+  if (text) return text.slice(0, 5);
+  return `${fallbackElement || 'X'}${index + 1}`.slice(0, 4);
+}
+
+function formatPdbAtomLine(atom: FrameExportAtom, x: number, y: number, z: number): string {
+  const serial = ((atom.index + 1) % 100000) || 99999;
+  const record = atom.isHetero ? 'HETATM' : 'ATOM  ';
+  const atomName = padLeft(atom.name, 4);
+  const resName = padRight(canonicalResidueNameForFormat(atom.residueName, 'pdb'), 3);
+  const chainId = normalizeChainId(atom.chainId);
+  const resSeq = Number.isFinite(atom.residueSeq) ? Math.max(1, Math.min(9999, Math.floor(atom.residueSeq))) : 1;
+  const insertionCode = normalizePdbInsertionCode(atom.insertionCode) || ' ';
+  const element = padLeft(normalizeElementSymbol(atom.element), 2);
+  return `${record}${padLeft(String(serial), 5)} ${atomName} ${resName} ${chainId}${padLeft(String(resSeq), 4)}${insertionCode}   `
+    + `${padLeft(x.toFixed(3), 8)}${padLeft(y.toFixed(3), 8)}${padLeft(z.toFixed(3), 8)}`
+    + `${padLeft('1.00', 6)}${padLeft('0.00', 6)}          ${element}`;
+}
+
+function serializeFrameAsPdb(atoms: FrameExportAtom[], frame: Float32Array): string {
+  const lines: string[] = [];
+  for (let i = 0; i < atoms.length; i += 1) {
+    const offset = i * 3;
+    lines.push(formatPdbAtomLine(atoms[i], frame[offset], frame[offset + 1], frame[offset + 2]));
+  }
+  lines.push('END');
+  return `${lines.join('\n')}\n`;
+}
+
+function serializeFrameAsGro(atoms: FrameExportAtom[], frame: Float32Array, title: string): string {
+  const lines: string[] = [];
+  lines.push(title.slice(0, 80));
+  lines.push(String(atoms.length));
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+
+  for (let i = 0; i < atoms.length; i += 1) {
+    const atom = atoms[i];
+    const offset = i * 3;
+    const xNm = frame[offset] / 10.0;
+    const yNm = frame[offset + 1] / 10.0;
+    const zNm = frame[offset + 2] / 10.0;
+    minX = Math.min(minX, xNm);
+    minY = Math.min(minY, yNm);
+    minZ = Math.min(minZ, zNm);
+    maxX = Math.max(maxX, xNm);
+    maxY = Math.max(maxY, yNm);
+    maxZ = Math.max(maxZ, zNm);
+
+    const resNo = ((Math.max(1, atom.residueSeq) % 100000) || 99999);
+    const atomNo = (((i + 1) % 100000) || 99999);
+    const groResName = canonicalResidueNameForFormat(atom.residueName, 'gro');
+    const line = `${padLeft(String(resNo), 5)}${padRight(groResName, 5)}${padLeft(atom.name, 5)}${padLeft(String(atomNo), 5)}`
+      + `${padLeft(xNm.toFixed(3), 8)}${padLeft(yNm.toFixed(3), 8)}${padLeft(zNm.toFixed(3), 8)}`;
+    lines.push(line);
+  }
+
+  const spanX = Number.isFinite(maxX - minX) ? Math.max(1.0, (maxX - minX) + 0.2) : 1.0;
+  const spanY = Number.isFinite(maxY - minY) ? Math.max(1.0, (maxY - minY) + 0.2) : 1.0;
+  const spanZ = Number.isFinite(maxZ - minZ) ? Math.max(1.0, (maxZ - minZ) + 0.2) : 1.0;
+  lines.push(`${padLeft(spanX.toFixed(5), 10)}${padLeft(spanY.toFixed(5), 10)}${padLeft(spanZ.toFixed(5), 10)}`);
+  return `${lines.join('\n')}\n`;
+}
+
+function serializeFrameAsXyz(atoms: FrameExportAtom[], frame: Float32Array, comment: string): string {
+  const lines: string[] = [String(atoms.length), comment];
+  for (let i = 0; i < atoms.length; i += 1) {
+    const offset = i * 3;
+    lines.push(
+      `${normalizeElementSymbol(atoms[i].element)} ${frame[offset].toFixed(6)} ${frame[offset + 1].toFixed(6)} ${frame[offset + 2].toFixed(6)}`
+    );
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+function buildFrameExportAtoms(initPayload: any, atomCount: number): FrameExportAtom[] {
+  const atomsRaw = Array.isArray(initPayload?.data?.atoms) ? initPayload.data.atoms : [];
+  const residueEntries = Array.isArray(initPayload?.data?.topology?.residueEntries)
+    ? initPayload.data.topology.residueEntries
+    : [];
+  const atomToResidue = Array.isArray(initPayload?.data?.topology?.atomToResidue)
+    ? initPayload.data.topology.atomToResidue
+    : [];
+
+  const chainLabelToPdbChain = new Map<string, string>();
+  const usedPdbChainChars = new Set<string>();
+  const usedPdbResidueKeys = new Set<string>();
+  const exportIdentityByResidueId = new Map<number, { chainId: string; residueSeq: number; insertionCode: string }>();
+  let fallbackIdentityCursor = 0;
+
+  function claimPdbChainChar(sourceLabelRaw: unknown): string {
+    const sourceLabel = String(sourceLabelRaw || '').trim() || 'A';
+    const existing = chainLabelToPdbChain.get(sourceLabel);
+    if (existing) return existing;
+
+    const direct = sourceLabel.charAt(0);
+    if (/^[A-Za-z0-9]$/.test(direct) && !usedPdbChainChars.has(direct)) {
+      usedPdbChainChars.add(direct);
+      chainLabelToPdbChain.set(sourceLabel, direct);
+      return direct;
+    }
+
+    for (const candidate of PDB_CHAIN_ID_CHARS) {
+      if (!usedPdbChainChars.has(candidate)) {
+        usedPdbChainChars.add(candidate);
+        chainLabelToPdbChain.set(sourceLabel, candidate);
+        return candidate;
+      }
+    }
+
+    chainLabelToPdbChain.set(sourceLabel, 'A');
+    return 'A';
+  }
+
+  function residueIdentityKey(chainId: string, residueSeq: number, insertionCode: string): string {
+    return `${chainId}:${residueSeq}:${insertionCode || '_'}`;
+  }
+
+  function allocateFallbackResidueIdentity(): { chainId: string; residueSeq: number; insertionCode: string } {
+    while (fallbackIdentityCursor < 9999 * PDB_CHAIN_ID_CHARS.length * (PDB_INSERTION_CHARS.length + 1)) {
+      const cursor = fallbackIdentityCursor;
+      fallbackIdentityCursor += 1;
+      const residueSeq = (cursor % 9999) + 1;
+      const chainBlock = Math.floor(cursor / 9999);
+      const chainId = PDB_CHAIN_ID_CHARS[chainBlock % PDB_CHAIN_ID_CHARS.length];
+      const insertionBlock = Math.floor(chainBlock / PDB_CHAIN_ID_CHARS.length);
+      const insertionCode = insertionBlock === 0
+        ? ''
+        : PDB_INSERTION_CHARS[(insertionBlock - 1) % PDB_INSERTION_CHARS.length];
+      const key = residueIdentityKey(chainId, residueSeq, insertionCode);
+      if (usedPdbResidueKeys.has(key)) continue;
+      usedPdbResidueKeys.add(key);
+      return { chainId, residueSeq, insertionCode };
+    }
+    // This should never be hit in normal MD workloads.
+    return { chainId: 'A', residueSeq: 1, insertionCode: '' };
+  }
+
+  function claimResidueIdentity(residueId: number, residue: any, atom: any): { chainId: string; residueSeq: number; insertionCode: string } {
+    const existing = exportIdentityByResidueId.get(residueId);
+    if (existing) return existing;
+
+    const sourceChainLabel = String(residue?.chainId || atom?.chainIdentifier || 'A');
+    const candidateChainId = claimPdbChainChar(sourceChainLabel);
+    const rawResidueSeq = Number.isFinite(Number(residue?.resSeq))
+      ? Math.floor(Number(residue.resSeq))
+      : (Number.isFinite(Number(atom?.residueSeq)) ? Math.floor(Number(atom.residueSeq)) : 1);
+    const candidateResidueSeq = Number.isFinite(rawResidueSeq) ? rawResidueSeq : 1;
+    const candidateInsertionCode = normalizePdbInsertionCode(residue?.insertionCode || atom?.insertionCode || '');
+
+    if (candidateResidueSeq >= 1 && candidateResidueSeq <= 9999) {
+      const key = residueIdentityKey(candidateChainId, candidateResidueSeq, candidateInsertionCode);
+      if (!usedPdbResidueKeys.has(key)) {
+        usedPdbResidueKeys.add(key);
+        const claimed = {
+          chainId: candidateChainId,
+          residueSeq: candidateResidueSeq,
+          insertionCode: candidateInsertionCode,
+        };
+        exportIdentityByResidueId.set(residueId, claimed);
+        return claimed;
+      }
+    }
+
+    const fallback = allocateFallbackResidueIdentity();
+    exportIdentityByResidueId.set(residueId, fallback);
+    return fallback;
+  }
+
+  const atoms: FrameExportAtom[] = [];
+  for (let i = 0; i < atomCount; i += 1) {
+    const atom = atomsRaw[i] || {};
+    const residueIdCandidate = Number.isFinite(Number(atomToResidue[i]))
+      ? Number(atomToResidue[i])
+      : (Number.isFinite(Number(atom.residueId)) ? Number(atom.residueId) : 0);
+    const residue = residueEntries[residueIdCandidate] || {};
+    const element = normalizeElementSymbol(atom.element || atom.name || 'C');
+    const name = normalizeAtomName(atom.name, element, i);
+    const residueName = normalizeResidueName(residue.resName || atom.residueName || 'UNK');
+    const identity = claimResidueIdentity(residueIdCandidate, residue, atom);
+    const classification = String(atom.classification || '');
+    const isHetero = atom.isHetero === true || classification === 'ligand' || classification === 'ion' || classification === 'solvent';
+    atoms.push({
+      index: i,
+      name,
+      element,
+      residueName,
+      residueSeq: identity.residueSeq,
+      chainId: identity.chainId,
+      insertionCode: identity.insertionCode,
+      isHetero,
+    });
+  }
+  return atoms;
+}
+
+function parseFrameCoordinates(raw: unknown, expectedLength: number): Float32Array {
+  if (!Array.isArray(raw)) {
+    throw new Error('Save Current Frame payload missing coordinate array.');
+  }
+  if (raw.length !== expectedLength) {
+    throw new Error(`Save Current Frame coordinate length mismatch (${raw.length} vs expected ${expectedLength}).`);
+  }
+  const coords = new Float32Array(expectedLength);
+  for (let i = 0; i < expectedLength; i += 1) {
+    const value = Number(raw[i]);
+    if (!Number.isFinite(value)) {
+      throw new Error(`Save Current Frame contains non-numeric coordinate at index ${i}.`);
+    }
+    coords[i] = value;
+  }
+  return coords;
+}
+
+function serializeFrameByFormat(
+  format: ExportFrameFormat,
+  atoms: FrameExportAtom[],
+  frameCoordinates: Float32Array,
+  title: string
+): string {
+  if (format === 'pdb') {
+    return serializeFrameAsPdb(atoms, frameCoordinates);
+  }
+  if (format === 'gro') {
+    return serializeFrameAsGro(atoms, frameCoordinates, title);
+  }
+  return serializeFrameAsXyz(atoms, frameCoordinates, title);
+}
+
 function resolveSelectionPresetValue(value: unknown, fallback: SelectionPreset): SelectionPreset {
   return (
     value === 'protein_only'
@@ -249,7 +580,7 @@ function resolveSolventHandlingValue(value: unknown, fallback: SolventHandling):
 function buildReopenSettingsOptions(
   dataset: { trajectoryPath: string; topologyPath?: string },
   loadOptions: MdDatasetLoadOptions | undefined,
-  effectiveBehavior: { initialFrameOnly: boolean; frameStride: number },
+  effectiveBehavior: { initialFrameOnly: boolean; frameStride: number; framesPerLoad: number | 'all' },
   initPayload: any,
   overridesRaw: unknown
 ): MdDatasetLoadOptions {
@@ -267,6 +598,7 @@ function buildReopenSettingsOptions(
     behavior: withLoadModeDefaults(loadMode, {
       initialFrameOnly: effectiveBehavior.initialFrameOnly,
       frameStride: effectiveBehavior.frameStride,
+      framesPerLoad: effectiveBehavior.framesPerLoad,
     }),
     filtering: {
       selectionPreset: resolveSelectionPresetValue(
@@ -1445,6 +1777,7 @@ export async function openMdViewer(
         enableFrameRequests: binaryStreamingEnabled,
         chunkSizeHint: streamChunkSize,
         frameStride: effectiveBehavior.frameStride,
+        framesPerLoad: effectiveBehavior.framesPerLoad,
         selectionPreset: loadOptions?.filtering.selectionPreset,
         solventHandling: loadOptions?.filtering.solventHandling,
         optionsSource: loadOptions?.source ?? 'default',
@@ -1497,6 +1830,8 @@ export async function openMdViewer(
         trajectoryExt,
         topologyExt: topologyExt || null,
         requestedFrameStride: effectiveBehavior.frameStride,
+        requestedFramesPerLoad: effectiveBehavior.framesPerLoad,
+        effectiveChunkSizeHint: Number(initPayload?.data?.trajectory?.chunkSizeHint ?? 0) || null,
         samplingFrameStride,
         rawFrameCount,
         sampledFrameCount,
@@ -1648,6 +1983,10 @@ export async function openMdViewer(
         reopenSettingsAutodriveDelayMs: parseEnvInt('MD_VIEWER_REOPEN_SETTINGS_AUTODRIVE_DELAY_MS', 900),
         reopenSettingsAutodriveAutoConfirm: parseEnvBool('MD_VIEWER_REOPEN_SETTINGS_AUTODRIVE_AUTO_CONFIRM'),
         reopenSettingsAutodriveOptions: parseEnvJsonObject('MD_VIEWER_REOPEN_SETTINGS_AUTODRIVE_OPTIONS_JSON'),
+        saveFrameAutodrive: parseEnvBool('MD_VIEWER_SAVE_FRAME_AUTODRIVE'),
+        saveFrameAutodriveDelayMs: parseEnvInt('MD_VIEWER_SAVE_FRAME_AUTODRIVE_DELAY_MS', 900),
+        saveFrameAutodriveFormats: parseEnvJsonArray('MD_VIEWER_SAVE_FRAME_AUTODRIVE_FORMATS_JSON'),
+        saveFrameAutodriveFrameIndices: parseEnvJsonArray('MD_VIEWER_SAVE_FRAME_AUTODRIVE_FRAME_INDICES_JSON'),
         dcdNcParityProbe: process.env.MD_VIEWER_DCD_NC_PARITY_PROBE === '1',
         loadOptions: loadOptions ? {
           source: loadOptions.source,
@@ -1659,7 +1998,7 @@ export async function openMdViewer(
       };
 
       // Listen for webview becoming ready
-      panel.webview.onDidReceiveMessage((message) => {
+      panel.webview.onDidReceiveMessage(async (message) => {
         console.log('[Extension] Received IPC message from webview:', message);
         if (message?.type === 'checkpoint' && typeof message.checkpoint === 'string') {
           emitCheckpoint(message.checkpoint, {
@@ -1720,6 +2059,108 @@ export async function openMdViewer(
               });
             }
           );
+          return;
+        }
+        if (message?.type === 'saveCurrentFrame') {
+          const frameIndex = Number.isFinite(Number(message.frameIndex)) ? Math.max(0, Math.floor(Number(message.frameIndex))) : 0;
+          const rawFrameIndex = Number.isFinite(Number(message.rawFrameIndex)) ? Math.max(0, Math.floor(Number(message.rawFrameIndex))) : frameIndex;
+          const suggestedFormat = normalizeExportFormat(String(message.format || ''), 'pdb');
+          const frameSuffix = String(rawFrameIndex);
+          emitCheckpoint('CHK_TOOL_3_SAVE_FRAME_REQUESTED', {
+            trajectoryPath: dataset.trajectoryPath,
+            topologyPath: dataset.topologyPath ?? null,
+            frameIndex,
+            rawFrameIndex,
+            suggestedFormat,
+            frameSuffix,
+          });
+
+          try {
+            const atomCountForSave = Math.max(0, Number(initPayload?.data?.atomCount ?? normalizedDataset.structure.atomCount ?? 0));
+            if (atomCountForSave <= 0) {
+              throw new Error('No atoms available for frame export.');
+            }
+
+            const frameCoordinates = parseFrameCoordinates(message.frameCoordinates, atomCountForSave * 3);
+            const exportAtoms = buildFrameExportAtoms(initPayload, atomCountForSave);
+            const sourceBase = path.parse(fileName).name || 'mdviewer_frame';
+            const defaultUri = vscode.Uri.file(
+              path.join(path.dirname(dataset.trajectoryPath), `${sourceBase}_${frameSuffix}.${suggestedFormat}`)
+            );
+            const autoSaveDirRaw = process.env.MD_VIEWER_SAVE_FRAME_AUTOSAVE_DIR;
+            const autoSaveBaseRaw = process.env.MD_VIEWER_SAVE_FRAME_AUTOSAVE_BASENAME;
+            let saveUri: vscode.Uri | undefined;
+            let saveSource: 'dialog' | 'autosave_env' = 'dialog';
+            if (autoSaveDirRaw && autoSaveDirRaw.trim().length > 0) {
+              const autoSaveDir = path.resolve(autoSaveDirRaw.trim());
+              fs.mkdirSync(autoSaveDir, { recursive: true });
+              const autoSaveBase = (autoSaveBaseRaw || sourceBase).trim() || sourceBase;
+              saveUri = vscode.Uri.file(path.join(autoSaveDir, `${autoSaveBase}_${frameSuffix}.${suggestedFormat}`));
+              saveSource = 'autosave_env';
+            } else {
+              saveUri = await vscode.window.showSaveDialog({
+                saveLabel: 'Save Current Frame',
+                defaultUri,
+                filters: {
+                  'PDB (*.pdb)': ['pdb'],
+                  'GRO (*.gro)': ['gro'],
+                  'XYZ (*.xyz)': ['xyz'],
+                },
+              });
+            }
+            if (!saveUri) {
+              emitCheckpoint('CHK_TOOL_4_SAVE_FRAME_DIALOG_CONFIRMED', {
+                saved: false,
+                reason: 'cancelled',
+                frameIndex,
+                rawFrameIndex,
+                suggestedFormat,
+                saveSource,
+              });
+              return;
+            }
+
+            const selectedFormat = normalizeExportFormat(path.extname(saveUri.fsPath), suggestedFormat);
+            const output = serializeFrameByFormat(
+              selectedFormat,
+              exportAtoms,
+              frameCoordinates,
+              `MD Viewer frame export from ${fileName} (raw frame index ${rawFrameIndex})`
+            );
+            fs.writeFileSync(saveUri.fsPath, output, 'utf8');
+            emitCheckpoint('CHK_TOOL_4_SAVE_FRAME_DIALOG_CONFIRMED', {
+              saved: true,
+              targetPath: saveUri.fsPath,
+              frameIndex,
+              rawFrameIndex,
+              selectedFormat,
+              saveSource,
+            });
+            emitCheckpoint('CHK_TOOL_5_SAVE_FRAME_WRITTEN', {
+              targetPath: saveUri.fsPath,
+              selectedFormat,
+              frameIndex,
+              rawFrameIndex,
+              atomCount: atomCountForSave,
+              byteLength: Buffer.byteLength(output, 'utf8'),
+              saveSource,
+              frameSuffix,
+            });
+            if (saveSource === 'dialog') {
+              void vscode.window.showInformationMessage(`MD Viewer: saved raw frame ${rawFrameIndex} to ${saveUri.fsPath}`);
+            }
+          } catch (err: unknown) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            emitCheckpoint('CHK_TOOL_6_SAVE_FRAME_ERROR', {
+              trajectoryPath: dataset.trajectoryPath,
+              topologyPath: dataset.topologyPath ?? null,
+              frameIndex,
+              rawFrameIndex,
+              suggestedFormat,
+              error: errorMsg,
+            });
+            void vscode.window.showErrorMessage(`MD Viewer: failed to save current frame — ${errorMsg}`);
+          }
           return;
         }
         if (message?.type === 'trajectoryFrameChunkRequest') {

@@ -1,12 +1,13 @@
 import { NormalizedDataset, ViewerPayload } from '../types/NormalizedDataset';
 import { emitCheckpoint } from '../runtimeCheckpoint';
-import { SelectionPreset, SolventHandling } from '../options/LoadOptions';
+import { FramesPerLoad, SelectionPreset, SolventHandling } from '../options/LoadOptions';
 
 export interface BuildInitPayloadOptions {
   initialFrameOnly?: boolean;
   enableFrameRequests?: boolean;
   chunkSizeHint?: number;
   frameStride?: number;
+  framesPerLoad?: FramesPerLoad;
   selectionPreset?: SelectionPreset;
   solventHandling?: SolventHandling;
   optionsSource?: 'default' | 'with_options' | 'setup_panel';
@@ -44,14 +45,22 @@ export class PayloadBuilder {
     const frameStride = Math.max(1, options.frameStride ?? 1);
     const rawFrameCount = providerMetadata.frameCount;
     const sampledFrameCount = Math.max(1, Math.ceil(rawFrameCount / frameStride));
-    const chunkSizeHint = Math.max(1, options.chunkSizeHint ?? providerMetadata.defaultChunkSize ?? 24);
+    const requestedFramesPerLoad = normalizeFramesPerLoad(options.framesPerLoad);
+    const defaultChunkSizeHint = Math.max(1, options.chunkSizeHint ?? providerMetadata.defaultChunkSize ?? 24);
+    const chunkSizeHint = resolveChunkSizeHintForPayload(
+      defaultChunkSizeHint,
+      requestedFramesPerLoad,
+      supportsFrameRequests,
+      sampledFrameCount
+    );
 
     let decimated = false;
     const requestedInitFrameCount = resolveRequestedInitFrameCount(
       sampledFrameCount,
       options.initialFrameOnly === true,
       supportsFrameRequests,
-      chunkSizeHint
+      chunkSizeHint,
+      requestedFramesPerLoad
     );
     let initialChunk = await dataset.trajectory.provider.getFrameChunk(
       0,
@@ -182,13 +191,52 @@ function resolveRequestedInitFrameCount(
   sampledFrameCount: number,
   initialFrameOnly: boolean,
   supportsFrameRequests: boolean,
-  chunkSizeHint: number
+  chunkSizeHint: number,
+  framesPerLoad?: FramesPerLoad
 ): number {
+  if (supportsFrameRequests && framesPerLoad !== undefined) {
+    if (framesPerLoad === 'all') {
+      return Math.max(1, sampledFrameCount);
+    }
+    const explicitCount = Math.max(1, Math.floor(framesPerLoad));
+    return Math.max(1, Math.min(explicitCount, sampledFrameCount));
+  }
+
   let requested = initialFrameOnly
     ? 1
     : (supportsFrameRequests ? Math.max(1, chunkSizeHint * 4) : sampledFrameCount);
   requested = Math.min(requested, sampledFrameCount);
   return Math.max(1, requested);
+}
+
+function resolveChunkSizeHintForPayload(
+  defaultChunkSizeHint: number,
+  framesPerLoad: FramesPerLoad | undefined,
+  supportsFrameRequests: boolean,
+  sampledFrameCount: number
+): number {
+  if (!supportsFrameRequests || framesPerLoad === undefined) {
+    return defaultChunkSizeHint;
+  }
+  if (framesPerLoad === 'all') {
+    return Math.max(1, sampledFrameCount);
+  }
+  return Math.max(1, Math.floor(framesPerLoad));
+}
+
+function normalizeFramesPerLoad(value: unknown): FramesPerLoad | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === 'all') return 'all';
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+    return undefined;
+  }
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return undefined;
 }
 
 function buildDisplayFilter(

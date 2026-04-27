@@ -8,7 +8,19 @@ import {
 } from '../types/NormalizedDataset';
 
 const ION_RESIDUES = new Set(['NA', 'NA+', 'CL', 'CL-', 'K', 'K+', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD', 'BR', 'I']);
-const SOLVENT_RESIDUES = new Set(['HOH', 'WAT', 'SOL', 'TIP3P', 'TIP4P', 'SPC', 'SPCE']);
+const SOLVENT_RESIDUES = new Set([
+  'HOH',
+  'WAT',
+  'SOL',
+  'H2O',
+  'TIP',
+  'TIP3',
+  'TIP3P',
+  'TIP4',
+  'TIP4P',
+  'SPC',
+  'SPCE',
+]);
 const POLYMER_RESIDUES = new Set([
   'ALA','ARG','ASN','ASP','CYS','GLN','GLU','GLY','HIS','ILE','LEU','LYS','MET','PHE','PRO','SER','THR','TRP','TYR','VAL',
   'ASH','AS4','GLH','GL4','CYM','CYX','LYN','HIP','HID','HIE',

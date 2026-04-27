@@ -310,6 +310,20 @@
         ? debugContext.reopenSettingsAutodriveOptions
         : null;
     const reopenSettingsAutodriveAutoConfirm = debugContext.reopenSettingsAutodriveAutoConfirm === true;
+    const saveFrameAutodrive = debugContext.saveFrameAutodrive === true;
+    const saveFrameAutodriveDelayMs = Number.isFinite(Number(debugContext.saveFrameAutodriveDelayMs))
+      ? Math.max(0, Number(debugContext.saveFrameAutodriveDelayMs))
+      : 900;
+    const saveFrameAutodriveFormats = Array.isArray(debugContext.saveFrameAutodriveFormats)
+      ? debugContext.saveFrameAutodriveFormats
+        .map((value) => String(value || '').trim().toLowerCase())
+        .filter((value) => value === 'pdb' || value === 'gro' || value === 'xyz')
+      : [];
+    const saveFrameAutodriveFrameIndices = Array.isArray(debugContext.saveFrameAutodriveFrameIndices)
+      ? debugContext.saveFrameAutodriveFrameIndices
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 0)
+      : [];
     const referenceHarnessRaw = debugContext.referenceHarness || {};
     const referenceHarnessEnabled = referenceHarnessRaw.enabled === true;
     const referenceHarness = {
@@ -584,6 +598,7 @@
     const slider = document.getElementById('slider');
     const btnBackground = document.getElementById('btn-background');
     const btnChangeSettings = document.getElementById('btn-change-settings');
+    const btnSaveCurrentFrame = document.getElementById('btn-save-current-frame');
     const btnSeqMode = document.getElementById('btn-seq-mode');
     const btnSequenceToggle = document.getElementById('btn-sequence-toggle');
     const btnPanelToggle = document.getElementById('btn-panel-toggle');
@@ -602,6 +617,12 @@
       trajectoryPath: debugContext.trajectoryPath || null,
       topologyPath: debugContext.topologyPath || null,
       loadOptionsSource: debugContext && debugContext.loadOptions ? debugContext.loadOptions.source || null : null,
+    });
+    sendWebviewCheckpoint('CHK_TOOL_1_TOOLS_SECTION_RENDERED', {
+      hasChangeSettingsControl: Boolean(btnChangeSettings),
+      hasSaveCurrentFrameControl: Boolean(btnSaveCurrentFrame),
+      trajectoryPath: debugContext.trajectoryPath || null,
+      topologyPath: debugContext.topologyPath || null,
     });
 
     function persistUiState() {
@@ -3570,6 +3591,36 @@
         }
       });
     }
+    function requestSaveCurrentFrame(format, source) {
+      const selectedFormat = String(format || 'pdb').toLowerCase();
+      const effectiveFormat = (selectedFormat === 'pdb' || selectedFormat === 'gro' || selectedFormat === 'xyz')
+        ? selectedFormat
+        : 'pdb';
+      const currentFramePos = getFrameData(currentFrame);
+      sendWebviewCheckpoint('CHK_TOOL_2_SAVE_CURRENT_FRAME_CLICKED', {
+        source: source || 'viewer_button',
+        format: effectiveFormat,
+        hasFrameData: Boolean(currentFramePos),
+        frameIndex: currentFrame,
+        rawFrameIndex: rawFrameIndexForVirtual(currentFrame),
+        atomCount,
+      });
+      if (!vscode || !currentFramePos) {
+        return;
+      }
+      vscode.postMessage({
+        type: 'saveCurrentFrame',
+        frameIndex: currentFrame,
+        rawFrameIndex: rawFrameIndexForVirtual(currentFrame),
+        frameCoordinates: Array.from(currentFramePos),
+        format: effectiveFormat,
+      });
+    }
+    if (btnSaveCurrentFrame) {
+      btnSaveCurrentFrame.addEventListener('click', () => {
+        requestSaveCurrentFrame('pdb', 'viewer_button');
+      });
+    }
     btnSeqMode.addEventListener('click', () => {
       sequenceMode = sequenceMode === 'three' ? 'one' : 'three';
       applySequenceMode();
@@ -4062,6 +4113,27 @@
         });
         btnChangeSettings.click();
       }, reopenSettingsAutodriveDelayMs);
+    }
+    if (saveFrameAutodrive && btnSaveCurrentFrame) {
+      const formats = saveFrameAutodriveFormats.length > 0 ? saveFrameAutodriveFormats : ['pdb'];
+      const frameTargets = saveFrameAutodriveFrameIndices.length > 0 ? saveFrameAutodriveFrameIndices : [0];
+      const jobs = [];
+      for (const frameTarget of frameTargets) {
+        const clampedFrame = Math.max(0, Math.min(totalFrameCount - 1, Math.floor(frameTarget)));
+        for (const format of formats) {
+          jobs.push({ frame: clampedFrame, format });
+        }
+      }
+
+      jobs.forEach((job, index) => {
+        const baseDelay = saveFrameAutodriveDelayMs + (index * 1100);
+        window.setTimeout(() => {
+          setFrame(job.frame);
+          window.setTimeout(() => {
+            requestSaveCurrentFrame(job.format, 'autodrive');
+          }, 420);
+        }, baseDelay);
+      });
     }
     requestAnimationFrame(animate);
     if (referenceHarness.enabled || dcdNcParityProbeEnabled) {

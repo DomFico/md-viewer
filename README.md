@@ -47,20 +47,58 @@ Amber-family notes:
 code --install-extension md-viewer-<version>.vsix
 ```
 
-Then run:
-- **MD Viewer: Run Dependency Diagnostics**
-- **MD Viewer: Select Python Interpreter** (if needed)
-- **MD Viewer: Bootstrap Remote Python Runtime** (optional, useful on Remote SSH/HPC)
+## Install and First Run
 
----
+After installing MD Viewer, the best first step is to check the runtime it will use.
 
-## Dependency notes
+1. Open the Command Palette with `Ctrl+Shift+P`.
+2. Run `MD Viewer: Run Dependency Diagnostics`.
+3. Review the result.
+4. If runtime is not ready, run `MD Viewer: Bootstrap Remote Python Runtime`.
+5. If needed, run `MD Viewer: Select Python Interpreter`.
+6. Right-click a supported file and choose **Launch MD Viewer**.
 
-MD Viewer bridge/runtime dependencies:
-- Python 3.10+ reachable by PATH or `mdViewer.pythonInterpreter`
-- Python packages: `mdtraj`, `numpy`, `scipy` (and `netCDF4` recommended for some environments)
+What this means:
+- The extension install adds commands/UI in VS Code.
+- MD Viewer also needs a Python runtime for bridge/parsing tasks.
+- In local windows, dependencies must exist locally.
+- In Remote SSH windows, dependencies must exist on the remote host.
 
-If you use VS Code Remote SSH, dependencies must be installed on the remote host where the extension host runs.
+Diagnostics checks:
+- selected Python interpreter
+- required runtime packages (`mdtraj`, `numpy`, `scipy`, with `netCDF4` recommended in some environments)
+- runtime readiness in the current extension-host context
+
+Bootstrap notes:
+- `MD Viewer: Bootstrap Remote Python Runtime` prepares a dedicated Python environment (usually under `~/.venvs/mdviewer`).
+- Despite the name, it is most relevant for Remote SSH/HPC setup.
+- It does not run simulations or modify your scientific data.
+- If you already have a good interpreter, selecting it may be enough.
+
+Success looks like:
+- diagnostics pass
+- a usable interpreter is selected
+- you can launch supported files such as `.pdb`, `.gro`, `.xtc`, `.dcd`, `.trr`, `.nc`, `.rst7`, `.inpcrd`, `.mdcrd`, `.parm7`, `.prmtop`
+
+If setup fails:
+- re-run diagnostics and read the failing check
+- select a different interpreter if needed
+- run bootstrap in the same VS Code window/context where you will use MD Viewer
+- on managed HPC, bootstrap may stop intentionally instead of forcing fragile source builds
+
+## Remote SSH / HPC Setup (Recommended)
+
+1. Connect to your host with a **Remote SSH** VS Code window.
+2. Run `MD Viewer: Run Dependency Diagnostics`.
+3. If needed, run `MD Viewer: Bootstrap Remote Python Runtime`.
+4. Run diagnostics again to confirm readiness.
+5. If needed, run `MD Viewer: Select Python Interpreter`.
+6. Launch a supported file from Explorer.
+
+Notes:
+- Prefer Python `3.10+` when available.
+- Python `3.9` is legacy/best-effort on managed systems.
+- Module/conda/mamba-based environments are fine; select the intended interpreter and rerun diagnostics.
 
 See deployment guide:
 - [docs/INSTALLATION_LOCAL_REMOTE.md](docs/INSTALLATION_LOCAL_REMOTE.md)
@@ -69,7 +107,9 @@ See deployment guide:
 
 ---
 
-## How to run the extension in VS Code
+## Development Setup (Run from Source)
+
+This section is only for developing MD Viewer from source. If you installed the extension from a VSIX or Marketplace package, use the installation and first-run steps above instead.
 
 ### 1. Install dependencies
 

@@ -51,7 +51,19 @@ export interface TopologyMetadata {
 const ION_RESIDUES = new Set([
   'NA', 'NA+', 'CL', 'CL-', 'K', 'K+', 'MG', 'CA', 'ZN', 'FE', 'CU', 'MN', 'CO', 'NI', 'CD'
 ]);
-const SOLVENT_RESIDUES = new Set(['HOH', 'WAT', 'SOL', 'TIP3P', 'TIP4P', 'SPC', 'SPCE']);
+const SOLVENT_RESIDUES = new Set([
+  'HOH',
+  'WAT',
+  'SOL',
+  'H2O',
+  'TIP',
+  'TIP3',
+  'TIP3P',
+  'TIP4',
+  'TIP4P',
+  'SPC',
+  'SPCE',
+]);
 const NUCLEIC_RESIDUES = new Set(['A', 'C', 'G', 'T', 'U', 'DA', 'DC', 'DG', 'DT', 'RA', 'RC', 'RG', 'RU']);
 const POLYMER_RESIDUES = new Set([
   'ALA','ARG','ASN','ASP','CYS','GLN','GLU','GLY','HIS','ILE','LEU','LYS','MET','PHE','PRO','SER','THR','TRP','TYR','VAL',
@@ -134,7 +146,13 @@ export function parsePdbTopology(raw: string): TopologyMetadata {
       const atomName = line.substring(12, 16).trim();
       const resName = line.substring(17, 20).trim();
       const chainId = line.substring(21, 22).trim();
-      const chainKey = chainId || '_';
+      // CHARMM-GUI and some older force-field workflows leave column 22 (chain ID) blank
+      // and encode chain identity in the segment name field (columns 73–76, e.g. PROA, MEMB).
+      // Fall back to the segment name only when the standard chain ID is absent so that
+      // ordinary PDBs with real chain IDs are completely unaffected.
+      const segName = line.length > 72 ? line.substring(72, 76).trim() : '';
+      const effectiveChainId = chainId || segName || '_';
+      const chainKey = effectiveChainId;
       
       const resSeqStr = line.substring(22, 26).trim();
       const resSeq = parseInt(resSeqStr, 10) || 0;
@@ -168,7 +186,7 @@ export function parsePdbTopology(raw: string): TopologyMetadata {
       if (chainIndex === undefined) {
         chainIndex = chains.length;
         chainIndexById.set(chainKey, chainIndex);
-        chains.push(chainId);
+        chains.push(effectiveChainId);
       }
       atomToChain.push(chainIndex);
 
@@ -179,7 +197,9 @@ export function parsePdbTopology(raw: string): TopologyMetadata {
         resId = residueEntries.length;
         resKeyMap.set(resKey, resId);
         residueEntries.push({
-          chainId,
+          // Preserve effective chain identity (chain column or segname fallback)
+          // so downstream normalization/payload grouping does not collapse to blank chains.
+          chainId: effectiveChainId,
           chainIndex,
           resSeq,
           insertionCode,
